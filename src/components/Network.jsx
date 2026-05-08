@@ -18,7 +18,7 @@ const NODES = RAW_NODES.filter(n => {
   return true;
 });
 
-const AUTHORS = ["All authors", "Your Name"];
+const AUTHORS = ["All authors", ...new Set(RAW_NODES.map(n => n.author).filter(Boolean).sort())];
 
 function getNodeColor(node) {
   return node.themes[0] ? (THEMES[node.themes[0]]?.color || "#888") : "#888";
