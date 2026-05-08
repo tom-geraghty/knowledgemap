@@ -2,9 +2,9 @@
 
 An open-source interactive semantic knowledge graph for exploring connections between articles, concepts, and ideas in a knowledge base.
 
-Built with React and D3. Originally developed for [psychsafety.com](https://psychsafety.com) and open-sourced as a reusable template.
+Built with React and D3. Originally developed for [psychsafety.com](https://psychsafety.com) and open-sourced as a reusable template. The demo uses classic films as example data — directors are used as the "author" field to show the filtering functionality.
 
-**[Live demo →](https://explore.psychsafety.com)**
+**[Live demo →](https://knowledgemap.onrender.com)**
 
 ---
 
