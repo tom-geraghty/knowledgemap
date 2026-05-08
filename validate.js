@@ -110,10 +110,15 @@ if (orphans.length > 0) {
 
 console.log('\n── Checking slug/url consistency ───────────────────');
 let slugMismatches = 0;
+// Detect primary domain from most common hostname across all node URLs
+const hostnames = RAW_NODES.map(n => { try { return new URL(n.url).hostname; } catch { return null; } }).filter(Boolean);
+const primaryDomain = hostnames.sort((a,b) => hostnames.filter(h=>h===b).length - hostnames.filter(h=>h===a).length)[0];
 for (const node of RAW_NODES) {
   if (!node.slug || !node.url || node.url === '#') continue;
-  // Check slug appears in url
-  if (node.url !== "#" && node.slug && !node.url.includes(node.slug)) {
+  // Only check slug/url consistency for nodes on the primary domain
+  let hostname; try { hostname = new URL(node.url).hostname; } catch { continue; }
+  if (primaryDomain && hostname !== primaryDomain) continue;
+  if (!node.url.includes(node.slug)) {
     warn(`Node "${node.id}" slug "${node.slug}" not found in url "${node.url}"`);
     slugMismatches++;
   }
