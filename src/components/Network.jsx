@@ -4,6 +4,13 @@ import { THEMES } from "../data/themes";
 import { RAW_NODES } from "../data/nodes";
 import { RAW_LINKS } from "../data/links";
 
+// ── Configuration ─────────────────────────────────────────────────────────────
+// If your articles are on a WordPress site, set this to your site's base URL.
+// The app will fetch featured images automatically via the WP REST API.
+// Set to null to disable featured image fetching.
+const WORDPRESS_BASE_URL = null; // e.g. "https://yoursite.com"
+// ─────────────────────────────────────────────────────────────────────────────
+
 const seenIds = new Set();
 const NODES = RAW_NODES.filter(n => {
   if (seenIds.has(n.id)) return false;
@@ -11,24 +18,34 @@ const NODES = RAW_NODES.filter(n => {
   return true;
 });
 
-const AUTHORS = ["All authors", "Tom Geraghty", "Jade Garratt", "Bea Poyton", "Tom Geraghty & Jade Garratt", "Nick Drage", "Navya Adhikarla", "Tom Barron", "Balázs Szakmáry", "Robert Slocomb"];
+const AUTHORS = ["All authors", "Your Name"];
 
 function getNodeColor(node) {
   return node.themes[0] ? (THEMES[node.themes[0]]?.color || "#888") : "#888";
 }
 
 function getNodeDomain(node) {
-  if (!node.url || node.url === "#") return "psychsafety";
-  if (node.url.includes("iterum.co.uk")) return "iterum";
-  if (node.url.includes("tomgeraghty.co.uk")) return "tomgeraghty";
-  return "psychsafety";
+  if (!node.url || node.url === "#") return "primary";
+  // Nodes from a different domain get a dashed border in the graph.
+  // Edit EXTERNAL_DOMAINS below to match your own external domains.
+  for (const domain of EXTERNAL_DOMAINS) {
+    if (node.url.includes(domain)) return domain;
+  }
+  return "primary";
 }
 
+// Add any external domains here — their nodes will render with a dashed border.
+// Remove this array (and set EXTERNAL_DOMAINS = []) if all your nodes are on one domain.
+const EXTERNAL_DOMAINS = [];
+
 const DOMAIN_STYLE = {
-  iterum:       { dash: "5,3",  strokeWidth: 2 },
-  tomgeraghty:  { dash: "2,3",  strokeWidth: 2 },
-  psychsafety:  { dash: null,   strokeWidth: 1.5 },
+  primary: { dash: null, strokeWidth: 1.5 },
+  // External domains get dashed borders automatically — no need to add entries here.
 };
+
+function getDomainStyle(domain) {
+  return DOMAIN_STYLE[domain] || { dash: "5,3", strokeWidth: 2 };
+}
 
 function renderMultiThemeNode(selection, getR) {
   selection.each(function (d) {
@@ -36,7 +53,7 @@ function renderMultiThemeNode(selection, getR) {
     const r = getR(d);
     const themes = d.themes.filter(t => THEMES[t]);
     if (themes.length <= 1) {
-      const ds = DOMAIN_STYLE[getNodeDomain(d)];
+      const ds = getDomainStyle(getNodeDomain(d));
       const circ = g.append("circle")
         .attr("r", r).attr("fill", THEMES[themes[0]]?.color || "#888")
         .attr("fill-opacity", 0.2).attr("stroke", THEMES[themes[0]]?.color || "#888")
@@ -51,7 +68,7 @@ function renderMultiThemeNode(selection, getR) {
           .attr("fill-opacity", 0.25).attr("stroke", color)
           .attr("stroke-width", 0.5).attr("class", "node-circle");
       });
-      const ds2 = DOMAIN_STYLE[getNodeDomain(d)];
+      const ds2 = getDomainStyle(getNodeDomain(d));
       const ring = g.append("circle").attr("r", r).attr("fill", "none")
         .attr("stroke", THEMES[themes[0]]?.color || "#888")
         .attr("stroke-width", ds2.strokeWidth).attr("class", "node-circle");
@@ -462,8 +479,8 @@ export default function Network() {
 
     useEffect(() => {
       setFeaturedImage(null);
-      if (!node.slug) return;
-      fetch(`https://psychsafety.com/wp-json/wp/v2/posts?slug=${node.slug}&_embed=true`)
+      if (!node.slug || !WORDPRESS_BASE_URL) return;
+      fetch(`${WORDPRESS_BASE_URL}/wp-json/wp/v2/posts?slug=${node.slug}&_embed=true`)
         .then(r => r.json())
         .then(data => {
           const img = data?.[0]?._embedded?.['wp:featuredmedia']?.[0]?.source_url;
@@ -616,24 +633,10 @@ export default function Network() {
         <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "7px", flexWrap: "wrap" }}>
           {!isMobile && (
             <>
-              <a href="https://psychsafety.com" target="_blank" rel="noreferrer"
-                style={{ display: "flex", alignItems: "center", textDecoration: "none", flexShrink: 0, background: "#1a1a2e", borderRadius: "6px", padding: "4px 8px" }}>
-                <img src="https://psychsafety.com/wp-content/uploads/2019/04/psych-safety-logo-white-300x222.png"
-                  alt="psychsafety.com" style={{ width: "48px", height: "auto", display: "block" }}
-                  onError={e => { e.target.style.display = "none"; }} />
-              </a>
               <span style={{ fontSize: "14px", fontWeight: 600, color: "#111", whiteSpace: "nowrap" }}>
-                Psychological Safety Knowledge Network
+                Knowledge Network
               </span>
             </>
-          )}
-          {isMobile && (
-            <a href="https://psychsafety.com" target="_blank" rel="noreferrer"
-              style={{ display: "flex", alignItems: "center", textDecoration: "none", flexShrink: 0, background: "#1a1a2e", borderRadius: "6px", padding: "3px 6px" }}>
-              <img src="https://psychsafety.com/wp-content/uploads/2019/04/psych-safety-logo-white-300x222.png"
-                alt="psychsafety.com" style={{ width: "36px", height: "auto", display: "block" }}
-                onError={e => { e.target.style.display = "none"; }} />
-            </a>
           )}
           {!isMobile && (
             <span style={{ fontSize: "10px", color: "#ccc", whiteSpace: "nowrap" }}>
