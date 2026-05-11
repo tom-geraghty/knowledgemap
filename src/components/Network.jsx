@@ -6,7 +6,6 @@ import { RAW_LINKS } from "../data/links";
 
 // ── Configuration ─────────────────────────────────────────────────────────────
 // If your articles are on a WordPress site, set this to your site's base URL.
-// The app will fetch featured images automatically via the WP REST API.
 // Set to null to disable featured image fetching.
 const WORDPRESS_BASE_URL = null; // e.g. "https://yoursite.com"
 // ─────────────────────────────────────────────────────────────────────────────
@@ -26,8 +25,8 @@ function getNodeColor(node) {
 
 function getNodeDomain(node) {
   if (!node.url || node.url === "#") return "primary";
-  // Nodes from a different domain get a dashed border in the graph.
-  // Edit EXTERNAL_DOMAINS below to match your own external domains.
+
+
   for (const domain of EXTERNAL_DOMAINS) {
     if (node.url.includes(domain)) return domain;
   }
@@ -35,12 +34,10 @@ function getNodeDomain(node) {
 }
 
 // Add any external domains here — their nodes will render with a dashed border.
-// Remove this array (and set EXTERNAL_DOMAINS = []) if all your nodes are on one domain.
 const EXTERNAL_DOMAINS = [];
 
 const DOMAIN_STYLE = {
   primary: { dash: null, strokeWidth: 1.5 },
-  // External domains get dashed borders automatically — no need to add entries here.
 };
 
 function getDomainStyle(domain) {
@@ -133,8 +130,9 @@ export default function Network() {
   const svgRef = useRef(null);
   const tappedRef = useRef(null);
   const lockedRef = useRef(initialNode?.id || null); // locked = selected via click/URL
-  const zoomRef = useRef(null);   // d3 zoom behaviour
-  const gRef = useRef(null);      // d3 group element
+  const zoomRef = useRef(null);      // d3 zoom behaviour
+  const gRef = useRef(null);         // d3 group element
+  const simNodesRef = useRef([]);    // live simulation nodes (mutated in place by D3)
   const [activeTheme, setActiveTheme] = useState(initialTheme);
   const [activeAuthor, setActiveAuthor] = useState("All authors");
   const [selected, setSelected] = useState(initialNode);
@@ -189,6 +187,51 @@ export default function Network() {
     window.history.pushState({}, "", url);
   }, []);
 
+  const zoomToNode = useCallback((node) => {
+    if (!svgRef.current || !zoomRef.current || !gRef.current) return;
+    if (!node.x || !node.y) return;
+    const svg = d3.select(svgRef.current);
+    const W = svgRef.current.clientWidth || window.innerWidth;
+    const H = svgRef.current.clientHeight || window.innerHeight - 130;
+    const scale = 1.8;
+    const tx = W / 2 - scale * node.x;
+    const ty = H / 2 - scale * node.y;
+    svg.transition().duration(600).call(
+      zoomRef.current.transform,
+      d3.zoomIdentity.translate(tx, ty).scale(scale)
+    );
+  }, []);
+
+  const zoomToTheme = useCallback((themeId) => {
+    if (!svgRef.current || !zoomRef.current) return;
+    const liveNodes = simNodesRef.current
+      .filter(d => d.themes?.includes(themeId) && d.x != null && d.y != null);
+    if (!liveNodes.length) return;
+
+    const xs = liveNodes.map(d => d.x);
+    const ys = liveNodes.map(d => d.y);
+    const x0 = Math.min(...xs), x1 = Math.max(...xs);
+    const y0 = Math.min(...ys), y1 = Math.max(...ys);
+
+    const W = svgRef.current.clientWidth || window.innerWidth;
+    const H = svgRef.current.clientHeight || window.innerHeight - 130;
+    const padding = 100;
+
+    const scaleX = (W - padding * 2) / (x1 - x0 || 1);
+    const scaleY = (H - padding * 2) / (y1 - y0 || 1);
+    const scale = Math.min(Math.max(Math.min(scaleX, scaleY), 0.4), 2.5);
+
+    const cx = (x0 + x1) / 2;
+    const cy = (y0 + y1) / 2;
+    const tx = W / 2 - scale * cx;
+    const ty = H / 2 - scale * cy;
+
+    d3.select(svgRef.current).transition().duration(600).call(
+      zoomRef.current.transform,
+      d3.zoomIdentity.translate(tx, ty).scale(scale)
+    );
+  }, []);
+
   const handleTheme = useCallback((t) => {
     if (t === "all") {
       setActiveTheme("all"); updateThemeUrl("all");
@@ -196,9 +239,10 @@ export default function Network() {
     } else {
       setActiveTheme(t); updateThemeUrl(t);
       setShowThemeOverlay(true);
+      setTimeout(() => zoomToTheme(t), 50);
     }
     setSelected(null); setTappedBoth(null); setHighlightId(null);
-  }, [updateThemeUrl]);
+  }, [updateThemeUrl, zoomToTheme]);
   const handleAuthor = useCallback((a) => { setActiveAuthor(a); setSelected(null); setTappedBoth(null); setHighlightId(null); }, []);
 
   const handleSearch = useCallback((q) => {
@@ -212,27 +256,12 @@ export default function Network() {
     ).slice(0, 8));
   }, []);
 
-  const zoomToNode = useCallback((node) => {
-    if (!svgRef.current || !zoomRef.current || !gRef.current) return;
-    if (!node.x || !node.y) return; // simulation not settled yet
-    const svg = d3.select(svgRef.current);
-    const W = svgRef.current.clientWidth || window.innerWidth;
-    const H = svgRef.current.clientHeight || window.innerHeight - 130;
-    const scale = 1.8;
-    const tx = W / 2 - scale * node.x;
-    const ty = H / 2 - scale * node.y;
-    svg.transition().duration(600).call(
-      zoomRef.current.transform,
-      d3.zoomIdentity.translate(tx, ty).scale(scale)
-    );
-  }, []);
-
   const handleSelectSearch = useCallback((node) => {
     setSelected(node); setHighlightId(node.id);
     lockedRef.current = node.id;
     updateUrl(node.id);
     // Find the live simulation node (has x/y coords)
-    const liveNode = gRef.current?.selectAll("g").data()?.find(d => d.id === node.id);
+    const liveNode = simNodesRef.current?.find(d => d.id === node.id);
     if (liveNode) zoomToNode(liveNode);
     setSearchQuery(""); setSearchResults([]);
     if (viewMode === "list") return;
@@ -277,6 +306,8 @@ export default function Network() {
     const svg = d3.select(el).attr("width", W).attr("height", H);
     svg.selectAll("*").remove();
     const g = svg.append("g");
+    gRef.current = g;
+    simNodesRef.current = nodes;
 
     svg.call(d3.zoom()
       .scaleExtent([0.1, 4])
@@ -290,7 +321,7 @@ export default function Network() {
       .force("collision", d3.forceCollide().radius(d => (isMobile ? 28 : 22) + d.weight * 2));
 
     const linkSel = g.append("g").selectAll("line").data(links).join("line")
-      .attr("stroke", "#ccc").attr("stroke-width", d => (d.strength || 1) * 0.5)
+      .attr("stroke", "#ccc").attr("stroke-width", d => (d.strength || 1) * 0.8)
       .attr("opacity", 0.28).attr("class", "link-line");
 
     const nodeG = g.append("g").selectAll("g").data(nodes).join("g")
@@ -417,7 +448,14 @@ export default function Network() {
     const svg = d3.select(svgRef.current);
     svg.selectAll(".node-circle").each(function (d) { if (d) d3.select(this).attr("opacity", getNodeOpacity(d)); });
     svg.selectAll(".node-label").each(function (d) { if (d) d3.select(this).attr("opacity", getNodeOpacity(d) > 0.5 ? 0.9 : 0.05); });
-    svg.selectAll(".link-line").each(function (d) { d3.select(this).attr("opacity", getLinkOpacity(d)); });
+    svg.selectAll(".link-line").each(function (d) {
+      const op = getLinkOpacity(d);
+      const isActive = op > 0.5;
+      d3.select(this)
+        .attr("opacity", op)
+        .attr("stroke-width", isActive ? (d.strength || 1) * 1.4 : (d.strength || 1) * 0.8)
+        .attr("stroke", isActive ? "#999" : "#ccc");
+    });
   }, [getNodeOpacity, getLinkOpacity]);
 
   const getConnected = (node) => {
@@ -564,7 +602,7 @@ export default function Network() {
                         setHighlightId(rel.id);
                         lockedRef.current = rel.id;
                         updateUrl(rel.id);
-                        const liveNode = gRef.current?.selectAll("g").data()?.find(d => d.id === rel.id);
+                        const liveNode = simNodesRef.current?.find(d => d.id === rel.id);
                         if (liveNode) zoomToNode(liveNode);
                       }}
                       style={{
@@ -632,11 +670,9 @@ export default function Network() {
         {/* Title + view toggle + search */}
         <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "7px", flexWrap: "wrap" }}>
           {!isMobile && (
-            <>
-              <span style={{ fontSize: "14px", fontWeight: 600, color: "#111", whiteSpace: "nowrap" }}>
-                Knowledge Network
-              </span>
-            </>
+            <span style={{ fontSize: "14px", fontWeight: 600, color: "#111", whiteSpace: "nowrap" }}>
+              Knowledge Network
+            </span>
           )}
           {!isMobile && (
             <span style={{ fontSize: "10px", color: "#ccc", whiteSpace: "nowrap" }}>
@@ -680,6 +716,15 @@ export default function Network() {
               ↺ Reset
             </button>
           )}
+
+          <a href="mailto:your@email.com?subject=Knowledge Network feedback" style={{
+            fontSize: "11px", padding: isMobile ? "6px 12px" : "4px 10px",
+            border: "1px solid #ddd", borderRadius: "20px", color: "#888",
+            textDecoration: "none", marginLeft: "6px", whiteSpace: "nowrap",
+            minHeight: isMobile ? "36px" : "auto", display: "inline-flex", alignItems: "center",
+          }}>
+            Feedback
+          </a>
 
           {/* Search */}
           <div style={{ position: "relative", marginLeft: isMobile ? "0" : "auto", width: isMobile ? "100%" : "200px" }}>
@@ -908,7 +953,7 @@ export default function Network() {
                 <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
                   {recent.map(n => (
                     <button key={n.id}
-                      onClick={() => { setSelected(n); setHighlightId(n.id); lockedRef.current = n.id; updateUrl(n.id); setViewMode("graph"); setTimeout(() => { const liveNode = gRef.current?.selectAll("g").data()?.find(d => d.id === n.id); if (liveNode) zoomToNode(liveNode); }, 300); }}
+                      onClick={() => { setSelected(n); setHighlightId(n.id); lockedRef.current = n.id; updateUrl(n.id); setViewMode("graph"); setTimeout(() => { const liveNode = simNodesRef.current?.find(d => d.id === n.id); if (liveNode) zoomToNode(liveNode); }, 300); }}
                       style={{
                         display: "flex", alignItems: "center", gap: "5px",
                         padding: "4px 8px", borderRadius: "6px", cursor: "pointer",
