@@ -3,81 +3,68 @@ import * as d3 from "d3";
 import { THEMES } from "../data/themes";
 import { RAW_NODES } from "../data/nodes";
 import { RAW_LINKS } from "../data/links";
-
-// ── Configuration ─────────────────────────────────────────────────────────────
-// If your articles are on a WordPress site, set this to your site's base URL.
-// Set to null to disable featured image fetching.
-const WORDPRESS_BASE_URL = null; // e.g. "https://yoursite.com"
-// ─────────────────────────────────────────────────────────────────────────────
+// Feature flags
+const ENABLE_PAPERS_MODE = true; // set to true to show the Articles/Papers toggle
 
 const seenIds = new Set();
-const NODES = RAW_NODES.filter(n => {
+const ARTICLE_NODES = RAW_NODES.filter(n => {
   if (seenIds.has(n.id)) return false;
   seenIds.add(n.id);
   return true;
 });
 
-const AUTHORS = ["All authors", ...new Set(RAW_NODES.map(n => n.author).filter(Boolean).sort())];
 
-function getNodeColor(node) {
-  return node.themes[0] ? (THEMES[node.themes[0]]?.color || "#888") : "#888";
+function getNodeColor(node, themes) {
+  return node.themes[0] ? (themes[node.themes[0]]?.color || "#888") : "#888";
 }
 
 function getNodeDomain(node) {
-  if (!node.url || node.url === "#") return "primary";
-
-
-  for (const domain of EXTERNAL_DOMAINS) {
-    if (node.url.includes(domain)) return domain;
-  }
-  return "primary";
+  if (!node.url || node.url === "#") return "psychsafety";
+  if (node.url.includes("iterum.co.uk")) return "iterum";
+  if (node.url.includes("tomgeraghty.co.uk")) return "tomgeraghty";
+  return "psychsafety";
 }
-
-// Add any external domains here — their nodes will render with a dashed border.
-const EXTERNAL_DOMAINS = [];
 
 const DOMAIN_STYLE = {
-  primary: { dash: null, strokeWidth: 1.5 },
+  iterum:       { dash: "5,3",  strokeWidth: 2 },
+  tomgeraghty:  { dash: "2,3",  strokeWidth: 2 },
+  psychsafety:  { dash: null,   strokeWidth: 1.5 },
 };
 
-function getDomainStyle(domain) {
-  return DOMAIN_STYLE[domain] || { dash: "5,3", strokeWidth: 2 };
-}
-
-function renderMultiThemeNode(selection, getR) {
+function renderMultiThemeNode(selection, getR, themes) {
   selection.each(function (d) {
     const g = d3.select(this);
     const r = getR(d);
-    const themes = d.themes.filter(t => THEMES[t]);
-    if (themes.length <= 1) {
-      const ds = getDomainStyle(getNodeDomain(d));
+    const nodeThemes = d.themes.filter(t => themes[t]);
+    if (nodeThemes.length <= 1) {
+      const ds = DOMAIN_STYLE[getNodeDomain(d)];
       const circ = g.append("circle")
-        .attr("r", r).attr("fill", THEMES[themes[0]]?.color || "#888")
-        .attr("fill-opacity", 0.2).attr("stroke", THEMES[themes[0]]?.color || "#888")
+        .attr("r", r).attr("fill", themes[nodeThemes[0]]?.color || "#888")
+        .attr("fill-opacity", 0.2).attr("stroke", themes[nodeThemes[0]]?.color || "#888")
         .attr("stroke-width", ds.strokeWidth).attr("class", "node-circle");
       if (ds.dash) circ.attr("stroke-dasharray", ds.dash);
     } else {
       const pie = d3.pie().value(1).sort(null);
       const arc = d3.arc().innerRadius(0).outerRadius(r);
-      pie(themes).forEach((slice, i) => {
-        const color = THEMES[themes[i]]?.color || "#888";
+      pie(nodeThemes).forEach((slice, i) => {
+        const color = themes[nodeThemes[i]]?.color || "#888";
         g.append("path").attr("d", arc(slice)).attr("fill", color)
           .attr("fill-opacity", 0.25).attr("stroke", color)
           .attr("stroke-width", 0.5).attr("class", "node-circle");
       });
-      const ds2 = getDomainStyle(getNodeDomain(d));
+      const ds2 = DOMAIN_STYLE[getNodeDomain(d)];
       const ring = g.append("circle").attr("r", r).attr("fill", "none")
-        .attr("stroke", THEMES[themes[0]]?.color || "#888")
+        .attr("stroke", themes[nodeThemes[0]]?.color || "#888")
         .attr("stroke-width", ds2.strokeWidth).attr("class", "node-circle");
       if (ds2.dash) ring.attr("stroke-dasharray", ds2.dash);
     }
   });
 }
 
-function buildNeighbours() {
+function buildNeighbours(nodes, links) {
   const map = {};
-  NODES.forEach(n => { map[n.id] = new Set(); });
-  RAW_LINKS.forEach(l => {
+  nodes.forEach(n => { map[n.id] = new Set(); });
+  links.forEach(l => {
     const s = typeof l.source === "object" ? l.source.id : l.source;
     const t = typeof l.target === "object" ? l.target.id : l.target;
     if (map[s]) map[s].add(t);
@@ -86,10 +73,10 @@ function buildNeighbours() {
   return map;
 }
 
-function buildDegrees() {
+function buildDegrees(nodes, links) {
   const deg = {};
-  NODES.forEach(n => { deg[n.id] = 0; });
-  RAW_LINKS.forEach(l => {
+  nodes.forEach(n => { deg[n.id] = 0; });
+  links.forEach(l => {
     const s = typeof l.source === "object" ? l.source.id : l.source;
     const t = typeof l.target === "object" ? l.target.id : l.target;
     if (deg[s] !== undefined) deg[s]++;
@@ -98,24 +85,236 @@ function buildDegrees() {
   return deg;
 }
 
-const NEIGHBOURS = buildNeighbours();
-const DEGREES = buildDegrees();
+const ARTICLE_NEIGHBOURS = buildNeighbours(ARTICLE_NODES, RAW_LINKS);
+const ARTICLE_DEGREES    = buildDegrees(ARTICLE_NODES, RAW_LINKS);
+const PAPER_NEIGHBOURS   = {};
+const PAPER_DEGREES      = {};
 const TOP_N = 10;
-const HUB_IDS = new Set(Object.entries(DEGREES).sort((a, b) => b[1] - a[1]).slice(0, TOP_N).map(([id]) => id));
+const ARTICLE_HUB_IDS = new Set(Object.entries(ARTICLE_DEGREES).sort((a, b) => b[1] - a[1]).slice(0, TOP_N).map(([id]) => id));
+const PAPER_HUB_IDS   = new Set();
 
 // Node radius — larger on mobile for touch targets
 function nodeR(d, isMobile) {
   return isMobile ? 12 + d.weight * 2 : 7 + d.weight * 1.5;
 }
 
+function DetailPanel({ node, onClose, onSelectNode, copied, setCopied, getConnected, isMobile, graphMode, THEMES_MAP, HUB_IDS, DEGREES, ARTICLE_NODES, getNodeColor }) {
+  const connected = getConnected(node);
+  const [featuredImage, setFeaturedImage] = useState(null);
+
+  useEffect(() => {
+    setFeaturedImage(null);
+    if (!node.slug || !WORDPRESS_BASE_URL) return;
+    fetch(`${WORDPRESS_BASE_URL}/wp-json/wp/v2/posts?slug=${node.slug}&_embed=true`)
+      .then(r => r.json())
+      .then(data => {
+        const img = data?.[0]?._embedded?.['wp:featuredmedia']?.[0]?.source_url;
+        if (img) setFeaturedImage(img);
+      })
+      .catch(() => {});
+  }, [node.slug]);
+
+  return (
+    <div style={{
+      position: "fixed", bottom: 0, left: 0, right: 0,
+      background: "white", borderTop: "1px solid #eee",
+      padding: isMobile ? "16px" : "12px 16px",
+      zIndex: 30, boxShadow: "0 -4px 16px rgba(0,0,0,0.06)",
+      maxHeight: isMobile ? "60vh" : "auto",
+      overflowY: isMobile ? "auto" : "visible",
+    }}>
+      {isMobile && (
+        <div style={{ width: "40px", height: "4px", background: "#ddd", borderRadius: "2px", margin: "0 auto 12px" }} />
+      )}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+        <div style={{ flex: 1, maxWidth: "800px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: node.title ? "2px" : "6px" }}>
+            <span style={{ width: "10px", height: "10px", borderRadius: "50%", background: getNodeColor(node, THEMES_MAP), display: "inline-block", flexShrink: 0 }} />
+            <span style={{ fontWeight: 600, fontSize: isMobile ? "16px" : "15px", color: "#111" }}>{node.label}</span>
+            {HUB_IDS.has(node.id) && (
+              <span style={{ fontSize: "10px", color: "#bbb" }}>· {DEGREES[node.id]} connections</span>
+            )}
+          </div>
+          {node.title && (
+            <div style={{ fontSize: "12px", color: "#555", fontStyle: "italic", marginBottom: "8px", paddingLeft: "18px" }}>
+              {node.title}
+            </div>
+          )}
+          <div style={{ display: "flex", gap: isMobile ? "0" : "16px", flexDirection: isMobile ? "column" : "row", alignItems: "flex-start" }}>
+            {featuredImage && node.url && node.url !== "#" && (
+              <a href={node.url} target="_blank" rel="noreferrer" style={{ flexShrink: 0, display: "block", marginBottom: isMobile ? "10px" : "0" }}>
+                <img src={featuredImage} alt={node.label}
+                  style={{ width: isMobile ? "100%" : "140px", height: isMobile ? "140px" : "90px",
+                    objectFit: "cover", borderRadius: "6px", display: "block",
+                    border: "1px solid #eee", transition: "opacity 0.15s",
+                  }}
+                  onMouseOver={e => e.target.style.opacity = "0.85"}
+                  onMouseOut={e => e.target.style.opacity = "1"}
+                />
+              </a>
+            )}
+            <div style={{ flex: 1 }}>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", alignItems: "center", marginBottom: "8px" }}>
+                <span style={{ fontSize: "12px", color: "#888" }}>{node.author}</span>
+                <span style={{ color: "#ddd", margin: "0 2px" }}>·</span>
+                {node.themes.filter(t => THEMES_MAP[t]).map(t => (
+                  <span key={t} style={{
+                    fontSize: "11px", padding: "2px 8px", borderRadius: "10px",
+                    background: THEMES_MAP[t].color + "22", border: `0.5px solid ${THEMES_MAP[t].color}`,
+                    color: THEMES_MAP[t].color, fontWeight: 500
+                  }}>{THEMES_MAP[t].label}</span>
+                ))}
+              </div>
+              <div style={{ fontSize: isMobile ? "14px" : "13px", color: "#444", lineHeight: 1.6, marginBottom: "8px" }}>
+                {node.desc}
+              </div>
+              <div style={{ display: "flex", gap: "12px", alignItems: "center", flexWrap: "wrap", marginBottom: "10px" }}>
+                {node.url && node.url !== "#" && (
+                  <a href={node.url} target="_blank" rel="noreferrer"
+                    style={{ fontSize: "13px", color: "#378ADD", textDecoration: "none", fontWeight: 500 }}>
+                    {graphMode === "papers" ? "View paper →" : "Read article →"}
+                  </a>
+                )}
+                {graphMode === "papers" && (
+                  <span style={{
+                    fontSize: "10px", padding: "2px 7px", borderRadius: "10px", fontWeight: 500,
+                    background: node.openAccess ? "#1D9E7522" : "#88878022",
+                    border: `0.5px solid ${node.openAccess ? "#1D9E75" : "#aaa"}`,
+                    color: node.openAccess ? "#1D9E75" : "#888",
+                  }}>
+                    {node.openAccess ? "✓ Open access" : "Paywalled"}
+                  </span>
+                )}
+                {node.journal && (
+                  <span style={{ fontSize: "11px", color: "#888", fontStyle: "italic" }}>
+                    {node.journal}
+                  </span>
+                )}
+                <span style={{ fontSize: "11px", color: "#bbb" }}>
+                  {connected.length} connection{connected.length !== 1 ? "s" : ""}
+                </span>
+              </div>
+              {node.citation && (
+                <div style={{ marginTop: "8px", paddingTop: "8px", borderTop: "1px solid #f0f0f0" }}>
+                  <div style={{ fontSize: "10px", color: "#bbb", marginBottom: "4px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Harvard citation</div>
+                  <div style={{ fontSize: "11px", color: "#666", lineHeight: 1.5, marginBottom: "6px" }}>
+                    {node.citation.split("*").map((part, i) =>
+                      i % 2 === 1 ? <em key={i}>{part}</em> : <span key={i}>{part}</span>
+                    )}
+                  </div>
+                  <button onClick={() => {
+                    navigator.clipboard.writeText(node.citation.replace(/\*/g, ""));
+                    setCopied(true); setTimeout(() => setCopied(false), 2000);
+                  }} style={{
+                    fontSize: "10px", padding: "2px 8px", borderRadius: "10px", cursor: "pointer",
+                    background: copied ? "#f0f9f0" : "transparent",
+                    border: `0.5px solid ${copied ? "#2a7a2a" : "#ddd"}`,
+                    color: copied ? "#2a7a2a" : "#888",
+                  }}>
+                    {copied ? "✓ Copied" : "Copy citation"}
+                  </button>
+                </div>
+              )}
+              {node.relatedArticles?.length > 0 && (
+                <div style={{ marginTop: "8px", paddingTop: "8px", borderTop: "1px solid #f0f0f0" }}>
+                  <div style={{ fontSize: "10px", color: "#bbb", marginBottom: "4px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Related articles</div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "4px" }}>
+                    {node.relatedArticles.map(aid => {
+                      const article = ARTICLE_NODES.find(n => n.id === aid);
+                      if (!article) return null;
+                      return (
+                        <a key={aid} href={article.url} target="_blank" rel="noreferrer" style={{
+                          fontSize: "11px", color: "#378ADD", textDecoration: "none",
+                          padding: "2px 7px", borderRadius: "10px",
+                          background: "#378ADD11", border: "0.5px solid #378ADD44",
+                        }}>
+                          {article.label}
+                        </a>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+          {connected.length > 0 && (
+            <div style={{ marginTop: "4px" }}>
+              <div style={{ fontSize: "10px", color: "#bbb", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "6px" }}>
+                Related {graphMode === "papers" ? "papers" : "articles"}
+              </div>
+              <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                {connected.slice(0, isMobile ? 3 : 5).map(rel => (
+                  <button key={rel.id}
+                    onClick={() => onSelectNode(rel)}
+                    style={{
+                      display: "flex", alignItems: "center", gap: "5px",
+                      padding: "4px 8px", borderRadius: "6px", cursor: "pointer",
+                      border: `1px solid ${getNodeColor(rel, THEMES_MAP)}44`,
+                      background: getNodeColor(rel, THEMES_MAP) + "11",
+                      fontSize: "11px", color: "#333", fontWeight: 400,
+                      textAlign: "left", maxWidth: isMobile ? "140px" : "180px",
+                    }}
+                    title={rel.desc}
+                  >
+                    <span style={{ width: "7px", height: "7px", borderRadius: "50%", flexShrink: 0, background: getNodeColor(rel, THEMES_MAP), opacity: 0.8 }} />
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {rel.label}
+                    </span>
+                    {rel.strength === 3 && <span style={{ fontSize: "9px", color: "#aaa", flexShrink: 0 }}>●●●</span>}
+                    {rel.strength === 2 && <span style={{ fontSize: "9px", color: "#ccc", flexShrink: 0 }}>●●</span>}
+                  </button>
+                ))}
+                {connected.length > (isMobile ? 3 : 5) && (
+                  <span style={{ fontSize: "11px", color: "#bbb", alignSelf: "center" }}>
+                    +{connected.length - (isMobile ? 3 : 5)} more
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+        <div style={{ display: "flex", gap: "6px", alignItems: "center", flexShrink: 0, marginLeft: "12px" }}>
+          <button
+            onClick={() => {
+              navigator.clipboard.writeText(window.location.href).then(() => {
+                setCopied(true);
+                setTimeout(() => setCopied(false), 2000);
+              });
+            }}
+            title="Copy link to this article"
+            style={{ fontSize: "11px", padding: isMobile ? "8px 12px" : "4px 10px",
+              cursor: "pointer", borderRadius: "8px", border: "1px solid #ddd",
+              background: copied ? "#f0f9f0" : "transparent",
+              color: copied ? "#2a7a2a" : "#888",
+              minHeight: isMobile ? "44px" : "auto", whiteSpace: "nowrap",
+            }}>
+            {copied ? "✓ Copied" : "Copy link"}
+          </button>
+          <button onClick={onClose} style={{
+            fontSize: "20px", lineHeight: 1, padding: isMobile ? "8px 12px" : "4px 8px",
+            cursor: "pointer", borderRadius: "8px",
+            border: "1px solid #eee", background: "transparent", color: "#888",
+            minWidth: isMobile ? "44px" : "auto", minHeight: isMobile ? "44px" : "auto",
+          }}>×</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Network() {
   // Read ?node= or ?slug= from URL on load — must be defined before first use
+  // Read mode from URL first — needed to pick the right dataset for other initialisers
+  const initialMode = "articles";
+  const initialNodes = ARTICLE_NODES;
+  const initialThemesMap = THEMES;
+
   const getInitialNodeFromUrl = () => {
     const params = new URLSearchParams(window.location.search);
     const nodeId = params.get("node");
     const slug = params.get("slug");
-    if (nodeId) return NODES.find(n => n.id === nodeId) || null;
-    if (slug) return NODES.find(n => n.slug === slug) || null;
+    if (nodeId) return initialNodes.find(n => n.id === nodeId) || null;
+    if (slug) return initialNodes.find(n => n.slug === slug) || null;
     return null;
   };
   const initialNode = getInitialNodeFromUrl();
@@ -123,9 +322,16 @@ export default function Network() {
   const getInitialThemeFromUrl = () => {
     const params = new URLSearchParams(window.location.search);
     const t = params.get("theme");
-    return t && THEMES[t] ? t : "all";
+    return t && initialThemesMap[t] ? t : "all";
   };
   const initialTheme = getInitialThemeFromUrl();
+
+  const getInitialAuthorFromUrl = () => {
+    const params = new URLSearchParams(window.location.search);
+    const a = params.get("author");
+    return a ? decodeURIComponent(a) : "All authors";
+  };
+  const initialAuthor = getInitialAuthorFromUrl();
 
   const svgRef = useRef(null);
   const tappedRef = useRef(null);
@@ -134,7 +340,18 @@ export default function Network() {
   const gRef = useRef(null);         // d3 group element
   const simNodesRef = useRef([]);    // live simulation nodes (mutated in place by D3)
   const [activeTheme, setActiveTheme] = useState(initialTheme);
-  const [activeAuthor, setActiveAuthor] = useState("All authors");
+  const [activeAuthor, setActiveAuthor] = useState(initialAuthor);
+  const [graphMode, setGraphMode] = useState(initialMode); // "articles" | "papers"
+
+  // Mode-derived data — switches the active dataset
+  const NODES      = ARTICLE_NODES;
+  const LINKS      = RAW_LINKS;
+  const THEMES_MAP = THEMES;
+  const NEIGHBOURS = ARTICLE_NEIGHBOURS;
+  const DEGREES    = ARTICLE_DEGREES;
+  const HUB_IDS    = ARTICLE_HUB_IDS;
+  const AUTHORS    = ["All authors", ...new Set(NODES.map(n => n.author).filter(Boolean).sort())];
+
   const [selected, setSelected] = useState(initialNode);
   const [tapped, setTapped] = useState(null); // first tap on mobile — highlight only
   const setTappedBoth = (val) => { setTapped(val); tappedRef.current = val; };
@@ -157,15 +374,15 @@ export default function Network() {
 
   const themeCounts = useMemo(() => {
     const counts = {};
-    NODES.forEach(n => { const p = n.themes[0]; if (p) counts[p] = (counts[p] || 0) + 1; });
+    NODES.forEach(n => n.themes.forEach(t => { counts[t] = (counts[t] || 0) + 1; }));
     return counts;
-  }, []);
+  }, [NODES]);
 
   const authorCounts = useMemo(() => {
     const counts = {};
     NODES.forEach(n => { counts[n.author] = (counts[n.author] || 0) + 1; });
     return counts;
-  }, []);
+  }, [NODES]);
 
   const updateUrl = useCallback((nodeId) => {
     const url = new URL(window.location);
@@ -183,6 +400,26 @@ export default function Network() {
       url.searchParams.set("theme", themeId);
     } else {
       url.searchParams.delete("theme");
+    }
+    window.history.pushState({}, "", url);
+  }, []);
+
+  const updateAuthorUrl = useCallback((author) => {
+    const url = new URL(window.location);
+    if (author && author !== "All authors") {
+      url.searchParams.set("author", encodeURIComponent(author));
+    } else {
+      url.searchParams.delete("author");
+    }
+    window.history.pushState({}, "", url);
+  }, []);
+
+  const updateModeUrl = useCallback((mode) => {
+    const url = new URL(window.location);
+    if (mode && mode !== "articles") {
+      url.searchParams.set("mode", mode);
+    } else {
+      url.searchParams.delete("mode");
     }
     window.history.pushState({}, "", url);
   }, []);
@@ -243,7 +480,7 @@ export default function Network() {
     }
     setSelected(null); setTappedBoth(null); setHighlightId(null);
   }, [updateThemeUrl, zoomToTheme]);
-  const handleAuthor = useCallback((a) => { setActiveAuthor(a); setSelected(null); setTappedBoth(null); setHighlightId(null); }, []);
+  const handleAuthor = useCallback((a) => { setActiveAuthor(a); updateAuthorUrl(a); setSelected(null); setTappedBoth(null); setHighlightId(null); }, [updateAuthorUrl]);
 
   const handleSearch = useCallback((q) => {
     setSearchQuery(q);
@@ -251,10 +488,12 @@ export default function Network() {
     const lower = q.toLowerCase();
     setSearchResults(NODES.filter(n =>
       n.label.toLowerCase().includes(lower) ||
+      (n.title || "").toLowerCase().includes(lower) ||
       n.desc.toLowerCase().includes(lower) ||
-      n.author.toLowerCase().includes(lower)
+      n.author.toLowerCase().includes(lower) ||
+      (n.journal || "").toLowerCase().includes(lower)
     ).slice(0, 8));
-  }, []);
+  }, [NODES]);
 
   const handleSelectSearch = useCallback((node) => {
     setSelected(node); setHighlightId(node.id);
@@ -281,7 +520,7 @@ export default function Network() {
       return 0.08;
     }
     return 1;
-  }, [isNodeVisible, highlightId]);
+  }, [isNodeVisible, highlightId, NEIGHBOURS]);
 
   const getLinkOpacity = useCallback((link) => {
     const s = typeof link.source === "object" ? link.source : NODES.find(n => n.id === link.source);
@@ -293,7 +532,7 @@ export default function Network() {
     }
     if (!isNodeVisible(s) || !isNodeVisible(t)) return 0.03;
     return 0.28;
-  }, [isNodeVisible, highlightId]);
+  }, [isNodeVisible, highlightId, NEIGHBOURS, NODES]);
 
   useEffect(() => {
     if (viewMode !== "graph") return;
@@ -302,10 +541,12 @@ export default function Network() {
     const W = el.clientWidth || window.innerWidth;
     const H = window.innerHeight - 130;
     const nodes = NODES.map(n => ({ ...n }));
-    const links = RAW_LINKS.map(l => ({ ...l }));
+    const links = LINKS.map(l => ({ ...l }));
     const svg = d3.select(el).attr("width", W).attr("height", H);
     svg.selectAll("*").remove();
     const g = svg.append("g");
+    gRef.current = g;
+    simNodesRef.current = nodes;
     gRef.current = g;
     simNodesRef.current = nodes;
 
@@ -386,11 +627,11 @@ export default function Network() {
       .attr("fill", "transparent")
       .attr("stroke", "none");
 
-    renderMultiThemeNode(nodeG, d => nodeR(d, isMobile));
+    renderMultiThemeNode(nodeG, d => nodeR(d, isMobile), THEMES_MAP);
 
     nodeG.filter(d => HUB_IDS.has(d.id)).append("circle")
       .attr("r", d => nodeR(d, isMobile) + 4).attr("fill", "none")
-      .attr("stroke", d => getNodeColor(d)).attr("stroke-width", 1)
+      .attr("stroke", d => getNodeColor(d, THEMES_MAP)).attr("stroke-width", 1)
       .attr("stroke-dasharray", "3,2").attr("opacity", 0.4).attr("class", "node-circle");
 
     const labelSel = nodeG.append("text")
@@ -401,7 +642,7 @@ export default function Network() {
 
     labelSel.each(function (d) {
       const el2 = d3.select(this);
-      const words = d.label.split(" ");
+      const words = (d.label || "").split(" ");
       if (words.length <= 2) {
         el2.append("tspan").attr("x", 0).attr("dy", "0.35em").text(d.label);
       } else {
@@ -442,7 +683,7 @@ export default function Network() {
 
     svg.on("click", () => { setSelected(null); setTappedBoth(null); setHighlightId(null); lockedRef.current = null; updateUrl(null); });
     return () => { sim.stop(); svg.selectAll("*").remove(); clearTimeout(fallbackTimer); };
-  }, [viewMode, isMobile]);
+  }, [viewMode, isMobile, graphMode]);
 
   useEffect(() => {
     const svg = d3.select(svgRef.current);
@@ -460,7 +701,7 @@ export default function Network() {
 
   const getConnected = (node) => {
     if (!node) return [];
-    return RAW_LINKS
+    return LINKS
       .filter(l => l.source === node.id || l.target === node.id)
       .map(l => {
         const otherId = l.source === node.id ? l.target : l.source;
@@ -490,7 +731,7 @@ export default function Network() {
       case "az":
       default:         return [...filtered].sort((a, b) => a.label.localeCompare(b.label));
     }
-  }, [activeTheme, activeAuthor, searchQuery, sortBy]);
+  }, [NODES, DEGREES, activeTheme, activeAuthor, searchQuery, sortBy]);
 
   const Pill = ({ color, label, count, active, onClick, small }) => (
     <button onClick={onClick} style={{
@@ -511,155 +752,6 @@ export default function Network() {
     </button>
   );
 
-  const DetailPanel = ({ node, onClose }) => {
-    const connected = getConnected(node);
-    const [featuredImage, setFeaturedImage] = useState(null);
-
-    useEffect(() => {
-      setFeaturedImage(null);
-      if (!node.slug || !WORDPRESS_BASE_URL) return;
-      fetch(`${WORDPRESS_BASE_URL}/wp-json/wp/v2/posts?slug=${node.slug}&_embed=true`)
-        .then(r => r.json())
-        .then(data => {
-          const img = data?.[0]?._embedded?.['wp:featuredmedia']?.[0]?.source_url;
-          if (img) setFeaturedImage(img);
-        })
-        .catch(() => {});
-    }, [node.slug]);
-
-    return (
-      <div style={{
-        position: "fixed", bottom: 0, left: 0, right: 0,
-        background: "white", borderTop: "1px solid #eee",
-        padding: isMobile ? "16px" : "12px 16px",
-        zIndex: 30, boxShadow: "0 -4px 16px rgba(0,0,0,0.06)",
-        maxHeight: isMobile ? "60vh" : "auto",
-        overflowY: isMobile ? "auto" : "visible",
-      }}>
-        {isMobile && (
-          <div style={{ width: "40px", height: "4px", background: "#ddd", borderRadius: "2px", margin: "0 auto 12px" }} />
-        )}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-          <div style={{ flex: 1, maxWidth: "800px" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px" }}>
-              <span style={{ width: "10px", height: "10px", borderRadius: "50%", background: getNodeColor(node), display: "inline-block", flexShrink: 0 }} />
-              <span style={{ fontWeight: 600, fontSize: isMobile ? "16px" : "15px", color: "#111" }}>{node.label}</span>
-              {HUB_IDS.has(node.id) && (
-                <span style={{ fontSize: "10px", color: "#bbb" }}>· {DEGREES[node.id]} connections</span>
-              )}
-            </div>
-            <div style={{ display: "flex", gap: isMobile ? "0" : "16px", flexDirection: isMobile ? "column" : "row", alignItems: "flex-start" }}>
-              {featuredImage && node.url && node.url !== "#" && (
-                <a href={node.url} target="_blank" rel="noreferrer" style={{ flexShrink: 0, display: "block", marginBottom: isMobile ? "10px" : "0" }}>
-                  <img src={featuredImage} alt={node.label}
-                    style={{ width: isMobile ? "100%" : "140px", height: isMobile ? "140px" : "90px",
-                      objectFit: "cover", borderRadius: "6px", display: "block",
-                      border: "1px solid #eee", transition: "opacity 0.15s",
-                    }}
-                    onMouseOver={e => e.target.style.opacity = "0.85"}
-                    onMouseOut={e => e.target.style.opacity = "1"}
-                  />
-                </a>
-              )}
-              <div style={{ flex: 1 }}>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", alignItems: "center", marginBottom: "8px" }}>
-                  <span style={{ fontSize: "12px", color: "#888" }}>{node.author}</span>
-                  <span style={{ color: "#ddd", margin: "0 2px" }}>·</span>
-                  {node.themes.filter(t => THEMES[t]).map(t => (
-                    <span key={t} style={{
-                      fontSize: "11px", padding: "2px 8px", borderRadius: "10px",
-                      background: THEMES[t].color + "22", border: `0.5px solid ${THEMES[t].color}`,
-                      color: THEMES[t].color, fontWeight: 500
-                    }}>{THEMES[t].label}</span>
-                  ))}
-                </div>
-                <div style={{ fontSize: isMobile ? "14px" : "13px", color: "#444", lineHeight: 1.6, marginBottom: "8px" }}>
-                  {node.desc}
-                </div>
-                <div style={{ display: "flex", gap: "12px", alignItems: "center", flexWrap: "wrap", marginBottom: "10px" }}>
-                  {node.url && node.url !== "#" && (
-                    <a href={node.url} target="_blank" rel="noreferrer"
-                      style={{ fontSize: "13px", color: "#378ADD", textDecoration: "none", fontWeight: 500 }}>
-                      Read article →
-                    </a>
-                  )}
-                  <span style={{ fontSize: "11px", color: "#bbb" }}>
-                    {connected.length} connection{connected.length !== 1 ? "s" : ""}
-                  </span>
-                </div>
-              </div>
-            </div>
-            {connected.length > 0 && (
-              <div style={{ marginTop: "4px" }}>
-                <div style={{ fontSize: "10px", color: "#bbb", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "6px" }}>
-                  Related articles
-                </div>
-                <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
-                  {connected.slice(0, isMobile ? 3 : 5).map(rel => (
-                    <button key={rel.id}
-                      onClick={() => {
-                        setSelected(rel);
-                        setHighlightId(rel.id);
-                        lockedRef.current = rel.id;
-                        updateUrl(rel.id);
-                        const liveNode = simNodesRef.current?.find(d => d.id === rel.id);
-                        if (liveNode) zoomToNode(liveNode);
-                      }}
-                      style={{
-                        display: "flex", alignItems: "center", gap: "5px",
-                        padding: "4px 8px", borderRadius: "6px", cursor: "pointer",
-                        border: `1px solid ${getNodeColor(rel)}44`,
-                        background: getNodeColor(rel) + "11",
-                        fontSize: "11px", color: "#333", fontWeight: 400,
-                        textAlign: "left", maxWidth: isMobile ? "140px" : "180px",
-                      }}
-                      title={rel.desc}
-                    >
-                      <span style={{ width: "7px", height: "7px", borderRadius: "50%", flexShrink: 0, background: getNodeColor(rel), opacity: 0.8 }} />
-                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {rel.label}
-                      </span>
-                      {rel.strength === 3 && <span style={{ fontSize: "9px", color: "#aaa", flexShrink: 0 }}>●●●</span>}
-                      {rel.strength === 2 && <span style={{ fontSize: "9px", color: "#ccc", flexShrink: 0 }}>●●</span>}
-                    </button>
-                  ))}
-                  {connected.length > (isMobile ? 3 : 5) && (
-                    <span style={{ fontSize: "11px", color: "#bbb", alignSelf: "center" }}>
-                      +{connected.length - (isMobile ? 3 : 5)} more
-                    </span>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-          <div style={{ display: "flex", gap: "6px", alignItems: "center", flexShrink: 0, marginLeft: "12px" }}>
-            <button
-              onClick={() => {
-                navigator.clipboard.writeText(window.location.href).then(() => {
-                  setCopied(true);
-                  setTimeout(() => setCopied(false), 2000);
-                });
-              }}
-              title="Copy link to this article"
-              style={{ fontSize: "11px", padding: isMobile ? "8px 12px" : "4px 10px",
-                cursor: "pointer", borderRadius: "8px", border: "1px solid #ddd",
-                background: copied ? "#f0f9f0" : "transparent",
-                color: copied ? "#2a7a2a" : "#888",
-                minHeight: isMobile ? "44px" : "auto", whiteSpace: "nowrap",
-              }}>
-              {copied ? "✓ Copied" : "Copy link"}
-            </button>
-            <button onClick={onClose} style={{
-              fontSize: "20px", lineHeight: 1, padding: isMobile ? "8px 12px" : "4px 8px",
-              cursor: "pointer", borderRadius: "8px",
-              border: "1px solid #eee", background: "transparent", color: "#888",
-              minWidth: isMobile ? "44px" : "auto", minHeight: isMobile ? "44px" : "auto",
-            }}>×</button>
-          </div>
-        </div>
-      </div>
-    );
-  };
 
   return (
     <div style={{ fontFamily: "system-ui, sans-serif", background: "#fff", minHeight: "100vh" }}>
@@ -676,8 +768,37 @@ export default function Network() {
           )}
           {!isMobile && (
             <span style={{ fontSize: "10px", color: "#ccc", whiteSpace: "nowrap" }}>
-              {NODES.length} articles · {RAW_LINKS.length} connections · beta
+              {NODES.length} articles · {LINKS.length} connections · beta
             </span>
+          )}
+
+          {/* Articles / Papers mode toggle */}
+          {ENABLE_PAPERS_MODE && (
+            <div style={{
+              display: "flex", borderRadius: "20px", border: "1px solid #ddd",
+              overflow: "hidden", marginLeft: isMobile ? "auto" : "8px",
+            }}>
+              {[["articles", "Articles"], ["papers", "Papers"]].map(([mode, label]) => (
+                <button key={mode} onClick={() => {
+                  setGraphMode(mode);
+                  updateModeUrl(mode);
+                  setActiveTheme("all"); updateThemeUrl("all");
+                  setActiveAuthor("All authors"); updateAuthorUrl("All authors");
+                  setSelected(null); setHighlightId(null);
+                  setTappedBoth(null); lockedRef.current = null;
+                  setSearchQuery(""); setSearchResults([]);
+                  setShowThemeOverlay(false); updateUrl(null);
+                }} style={{
+                  fontSize: "11px", padding: isMobile ? "6px 14px" : "4px 12px",
+                  background: graphMode === mode ? "#1a1a2e" : "transparent",
+                  color: graphMode === mode ? "#fff" : "#888",
+                  border: "none", cursor: "pointer", fontWeight: graphMode === mode ? 600 : 400,
+                  minHeight: isMobile ? "36px" : "auto",
+                }}>
+                  {label}
+                </button>
+              ))}
+            </div>
           )}
 
           {/* View mode toggle */}
@@ -702,12 +823,11 @@ export default function Network() {
           {(activeTheme !== "all" || activeAuthor !== "All authors" || searchQuery || selected) && (
             <button onClick={() => {
               setActiveTheme("all"); updateThemeUrl("all");
-              setActiveAuthor("All authors");
+              setActiveAuthor("All authors"); updateAuthorUrl("All authors");
               setSelected(null); setHighlightId(null);
               setTappedBoth(null); lockedRef.current = null;
               setSearchQuery(""); setSearchResults([]);
-              updateUrl(null); setShowThemeOverlay(false);
-            }} style={{
+              updateUrl(null); setShowThemeOverlay(false);            }} style={{
               fontSize: "11px", padding: isMobile ? "6px 12px" : "4px 10px",
               background: "transparent", border: "1px solid #ddd",
               borderRadius: "20px", cursor: "pointer", color: "#888",
@@ -717,7 +837,7 @@ export default function Network() {
             </button>
           )}
 
-          <a href="mailto:your@email.com?subject=Knowledge Network feedback" style={{
+          <a href="mailto:your@email.com?subject=Knowledge Network feedback" target="_blank" rel="noreferrer" style={{
             fontSize: "11px", padding: isMobile ? "6px 12px" : "4px 10px",
             border: "1px solid #ddd", borderRadius: "20px", color: "#888",
             textDecoration: "none", marginLeft: "6px", whiteSpace: "nowrap",
@@ -728,7 +848,7 @@ export default function Network() {
 
           {/* Search */}
           <div style={{ position: "relative", marginLeft: isMobile ? "0" : "auto", width: isMobile ? "100%" : "200px" }}>
-            <input type="text" placeholder="Search articles…" value={searchQuery}
+            <input type="text" placeholder={graphMode === "papers" ? "Search papers…" : "Search articles…"} value={searchQuery}
               onChange={e => handleSearch(e.target.value)}
               style={{
                 width: "100%", fontSize: "13px",
@@ -757,12 +877,12 @@ export default function Network() {
                     <div style={{ fontWeight: 500, color: "#111", marginBottom: "2px" }}>{n.label}</div>
                     <div style={{ fontSize: "11px", color: "#888", marginBottom: "3px" }}>{n.author}</div>
                     <div style={{ display: "flex", gap: "3px", flexWrap: "wrap" }}>
-                      {n.themes.filter(t => THEMES[t]).map(t => (
+                      {n.themes.filter(t => THEMES_MAP[t]).map(t => (
                         <span key={t} style={{
                           fontSize: "9px", padding: "0 5px", borderRadius: "8px",
-                          background: THEMES[t].color + "22", color: THEMES[t].color,
-                          border: `0.5px solid ${THEMES[t].color}`
-                        }}>{THEMES[t].label}</span>
+                          background: THEMES_MAP[t].color + "22", color: THEMES_MAP[t].color,
+                          border: `0.5px solid ${THEMES_MAP[t].color}`
+                        }}>{THEMES_MAP[t].label}</span>
                       ))}
                     </div>
                   </div>
@@ -782,15 +902,15 @@ export default function Network() {
             WebkitOverflowScrolling: "touch",
           }}>
             <Pill color="#555" label="All" count={NODES.length} active={activeTheme === "all"} onClick={() => handleTheme("all")} />
-            {Object.entries(THEMES).map(([key, val]) => (
+            {Object.entries(THEMES_MAP).map(([key, val]) => (
               <Pill key={key} color={val.color} label={val.label} count={themeCounts[key] || 0}
                 active={activeTheme === key} onClick={() => handleTheme(key)} />
             ))}
           </div>
 
           {/* Theme overlay */}
-          {showThemeOverlay && activeTheme !== "all" && THEMES[activeTheme] && (() => {
-            const t = THEMES[activeTheme];
+          {showThemeOverlay && activeTheme !== "all" && THEMES_MAP[activeTheme] && (() => {
+            const t = THEMES_MAP[activeTheme];
             return (
               <div style={{
                 position: "absolute", top: "100%", left: 0, zIndex: 50,
@@ -854,14 +974,14 @@ export default function Network() {
       {activeTheme !== "all" && activeAuthor !== "All authors" && (
         <div style={{ padding: "4px 14px", background: "#fafafa", borderBottom: "0.5px solid #f0f0f0", display: "flex", alignItems: "center", gap: "6px", fontSize: "11px", color: "#888" }}>
           <span>Showing:</span>
-          <span style={{ padding: "1px 7px", borderRadius: "10px", background: THEMES[activeTheme]?.color + "22", border: `0.5px solid ${THEMES[activeTheme]?.color}`, color: THEMES[activeTheme]?.color, fontSize: "10px" }}>
-            {THEMES[activeTheme]?.label}
+          <span style={{ padding: "1px 7px", borderRadius: "10px", background: THEMES_MAP[activeTheme]?.color + "22", border: `0.5px solid ${THEMES_MAP[activeTheme]?.color}`, color: THEMES_MAP[activeTheme]?.color, fontSize: "10px" }}>
+            {THEMES_MAP[activeTheme]?.label}
           </span>
           <span style={{ color: "#ccc" }}>+</span>
           <span style={{ padding: "1px 7px", borderRadius: "10px", background: "#88888818", border: "0.5px solid #aaa", color: "#666", fontSize: "10px" }}>
             {activeAuthor}
           </span>
-          <button onClick={() => { setActiveTheme("all"); updateThemeUrl("all"); setActiveAuthor("All authors"); setShowThemeOverlay(false); }}
+          <button onClick={() => { setActiveTheme("all"); updateThemeUrl("all"); setActiveAuthor("All authors"); updateAuthorUrl("All authors"); setShowThemeOverlay(false); }}
             style={{ fontSize: "10px", color: "#bbb", background: "none", border: "none", cursor: "pointer", marginLeft: "auto" }}>
             Clear ×
           </button>
@@ -898,11 +1018,11 @@ export default function Network() {
                 {HUB_IDS.has(tooltip.node.id) && <span style={{ color: "#bbb", marginLeft: "6px" }}>· {DEGREES[tooltip.node.id]} connections</span>}
               </div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: "3px" }}>
-                {tooltip.node.themes.filter(t => THEMES[t]).map(t => (
+                {tooltip.node.themes.filter(t => THEMES_MAP[t]).map(t => (
                   <span key={t} style={{
                     fontSize: "10px", padding: "1px 5px", borderRadius: "8px",
-                    background: THEMES[t].color + "22", border: `0.5px solid ${THEMES[t].color}`, color: THEMES[t].color
-                  }}>{THEMES[t].label}</span>
+                    background: THEMES_MAP[t].color + "22", border: `0.5px solid ${THEMES_MAP[t].color}`, color: THEMES_MAP[t].color
+                  }}>{THEMES_MAP[t].label}</span>
                 ))}
               </div>
             </div>
@@ -916,7 +1036,7 @@ export default function Network() {
               padding: "10px 12px", fontSize: "10px", color: "#888", lineHeight: 1.9, zIndex: 25,
               boxShadow: "0 2px 8px rgba(0,0,0,0.06)"
             }}>
-              {Object.entries(THEMES).map(([key, val]) => (
+              {Object.entries(THEMES_MAP).map(([key, val]) => (
                 <div key={key} style={{ display: "flex", alignItems: "center", gap: "6px" }}>
                   <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: val.color, display: "inline-block", opacity: 0.8 }} />
                   {val.label}
@@ -957,11 +1077,11 @@ export default function Network() {
                       style={{
                         display: "flex", alignItems: "center", gap: "5px",
                         padding: "4px 8px", borderRadius: "6px", cursor: "pointer",
-                        border: `1px solid ${getNodeColor(n)}44`,
-                        background: getNodeColor(n) + "11",
+                        border: `1px solid ${getNodeColor(n, THEMES_MAP)}44`,
+                        background: getNodeColor(n, THEMES_MAP) + "11",
                         fontSize: "11px", color: "#333",
                       }}>
-                      <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: getNodeColor(n), flexShrink: 0 }} />
+                      <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: getNodeColor(n, THEMES_MAP), flexShrink: 0 }} />
                       {n.label}
                       <span style={{ fontSize: "9px", color: "#bbb", flexShrink: 0 }}>{n.date?.slice(0, 7)}</span>
                     </button>
@@ -971,7 +1091,7 @@ export default function Network() {
             );
           })()}
           <div style={{ padding: "10px 16px", fontSize: "11px", color: "#aaa", borderBottom: "0.5px solid #f0f0f0", display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-            <span>{filteredNodes.length} article{filteredNodes.length !== 1 ? "s" : ""}</span>
+            <span>{filteredNodes.length} {graphMode === "papers" ? "paper" : "article"}{filteredNodes.length !== 1 ? "s" : ""}</span>
             <select value={sortBy} onChange={e => setSortBy(e.target.value)}
               style={{ fontSize: "11px", padding: "2px 6px", border: "0.5px solid #ddd", borderRadius: "6px", background: "white", color: "#666", fontFamily: "inherit", cursor: "pointer", marginLeft: "4px" }}>
               <option value="newest">Newest first</option>
@@ -981,8 +1101,8 @@ export default function Network() {
               <option value="az">A–Z</option>
             </select>
             {activeTheme !== "all" && (
-              <span style={{ padding: "1px 7px", borderRadius: "10px", background: THEMES[activeTheme]?.color + "22", border: `0.5px solid ${THEMES[activeTheme]?.color}`, color: THEMES[activeTheme]?.color, fontSize: "10px" }}>
-                {THEMES[activeTheme]?.label}
+              <span style={{ padding: "1px 7px", borderRadius: "10px", background: THEMES_MAP[activeTheme]?.color + "22", border: `0.5px solid ${THEMES_MAP[activeTheme]?.color}`, color: THEMES_MAP[activeTheme]?.color, fontSize: "10px" }}>
+                {THEMES_MAP[activeTheme]?.label}
               </span>
             )}
             {activeAuthor !== "All authors" && (
@@ -996,7 +1116,7 @@ export default function Network() {
               </span>
             )}
             {(activeTheme !== "all" || activeAuthor !== "All authors" || searchQuery) && (
-              <button onClick={() => { setActiveTheme("all"); updateThemeUrl("all"); setActiveAuthor("All authors"); setSearchQuery(""); setSearchResults([]); setShowThemeOverlay(false); }}
+              <button onClick={() => { setActiveTheme("all"); updateThemeUrl("all"); setActiveAuthor("All authors"); updateAuthorUrl("All authors"); setSearchQuery(""); setSearchResults([]); setShowThemeOverlay(false); }}
                 style={{ fontSize: "10px", color: "#bbb", background: "none", border: "none", cursor: "pointer", padding: "0", marginLeft: "auto" }}>
                 Clear filters ×
               </button>
@@ -1014,14 +1134,15 @@ export default function Network() {
             >
               <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "8px" }}>
                 <div style={{ flex: 1 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "3px" }}>
-                    <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: getNodeColor(n), display: "inline-block", flexShrink: 0 }} />
-                    <span style={{ fontWeight: 500, fontSize: isMobile ? "14px" : "13px", color: "#111" }}>{n.label}</span>
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "2px" }}>
+                    <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: getNodeColor(n, THEMES_MAP), display: "inline-block", flexShrink: 0 }} />
+                    <span style={{ fontWeight: 500, fontSize: isMobile ? "14px" : "13px", color: "#111" }}>{n.title || n.label}</span>
                     {HUB_IDS.has(n.id) && <span style={{ fontSize: "9px", color: "#bbb" }}>◌ hub</span>}
                   </div>
-                  <div style={{ fontSize: "11px", color: "#999", marginBottom: "4px", paddingLeft: "14px", display: "flex", gap: "8px" }}>
-                    <span>{n.author}</span>
-                    {n.date && <span style={{ color: "#ccc" }}>{n.date.slice(0, 7)}</span>}
+                  <div style={{ fontSize: "11px", color: "#999", marginBottom: "4px", paddingLeft: "14px", display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                    <span>{n.label}</span>
+                    {n.journal && <span style={{ color: "#bbb" }}>· {n.journal}</span>}
+                    {n.date && !n.journal && <span style={{ color: "#ccc" }}>{n.date.slice(0, 7)}</span>}
                     {(sortBy === "most" || sortBy === "least") && (
                       <span style={{ color: "#ccc" }}>{DEGREES[n.id] || 0} connections</span>
                     )}
@@ -1030,12 +1151,12 @@ export default function Network() {
                     {n.desc}
                   </div>
                   <div style={{ display: "flex", gap: "3px", flexWrap: "wrap", paddingLeft: "14px" }}>
-                    {n.themes.filter(t => THEMES[t]).map(t => (
+                    {n.themes.filter(t => THEMES_MAP[t]).map(t => (
                       <span key={t} style={{
                         fontSize: "10px", padding: "1px 6px", borderRadius: "8px",
-                        background: THEMES[t].color + "22", border: `0.5px solid ${THEMES[t].color}`,
-                        color: THEMES[t].color
-                      }}>{THEMES[t].label}</span>
+                        background: THEMES_MAP[t].color + "22", border: `0.5px solid ${THEMES_MAP[t].color}`,
+                        color: THEMES_MAP[t].color
+                      }}>{THEMES_MAP[t].label}</span>
                     ))}
                   </div>
                 </div>
@@ -1056,7 +1177,7 @@ export default function Network() {
       )}
 
       {/* Detail panel */}
-      {selected && <DetailPanel node={selected} onClose={() => { setSelected(null); setHighlightId(null); setTappedBoth(null); lockedRef.current = null; updateUrl(null); }} />}
+      {selected && <DetailPanel node={selected} onClose={() => { setSelected(null); setHighlightId(null); setTappedBoth(null); lockedRef.current = null; updateUrl(null); }} onSelectNode={(rel) => { setSelected(rel); setHighlightId(rel.id); lockedRef.current = rel.id; updateUrl(rel.id); const liveNode = simNodesRef.current?.find(d => d.id === rel.id); if (liveNode) zoomToNode(liveNode); }} copied={copied} setCopied={setCopied} getConnected={getConnected} isMobile={isMobile} graphMode={graphMode} THEMES_MAP={THEMES_MAP} HUB_IDS={HUB_IDS} DEGREES={DEGREES} ARTICLE_NODES={ARTICLE_NODES} getNodeColor={getNodeColor} />}
     </div>
   );
 }
