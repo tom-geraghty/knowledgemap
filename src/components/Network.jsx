@@ -99,6 +99,7 @@ function nodeR(d, isMobile) {
 }
 
 function DetailPanel({ node, onClose, onSelectNode, copied, setCopied, getConnected, isMobile, graphMode, THEMES_MAP, HUB_IDS, DEGREES, ARTICLE_NODES, getNodeColor }) {
+  const [showAllConnected, setShowAllConnected] = useState(false);
   const connected = getConnected(node);
   const [featuredImage, setFeaturedImage] = useState(null);
 
@@ -243,7 +244,7 @@ function DetailPanel({ node, onClose, onSelectNode, copied, setCopied, getConnec
                 Related {graphMode === "papers" ? "papers" : "articles"}
               </div>
               <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
-                {connected.slice(0, isMobile ? 3 : 5).map(rel => (
+                {(showAllConnected ? connected : connected.slice(0, isMobile ? 3 : 5)).map(rel => (
                   <button key={rel.id}
                     onClick={() => onSelectNode(rel)}
                     style={{
@@ -264,10 +265,14 @@ function DetailPanel({ node, onClose, onSelectNode, copied, setCopied, getConnec
                     {rel.strength === 2 && <span style={{ fontSize: "9px", color: "#ccc", flexShrink: 0 }}>●●</span>}
                   </button>
                 ))}
-                {connected.length > (isMobile ? 3 : 5) && (
-                  <span style={{ fontSize: "11px", color: "#bbb", alignSelf: "center" }}>
+                {connected.length > (isMobile ? 3 : 5) && !showAllConnected && (
+                  <button onClick={() => setShowAllConnected(true)} style={{
+                    fontSize: "11px", color: "#888", alignSelf: "center", cursor: "pointer",
+                    background: "transparent", border: "none", padding: "2px 4px", fontFamily: "inherit",
+                    textDecoration: "underline", textDecorationStyle: "dotted",
+                  }}>
                     +{connected.length - (isMobile ? 3 : 5)} more
-                  </span>
+                  </button>
                 )}
               </div>
             </div>
@@ -836,6 +841,27 @@ export default function Network() {
               ↺ Reset
             </button>
           )}
+
+          <button onClick={() => {
+            const pool = filteredNodes.length > 0 ? filteredNodes : NODES;
+            const pick = pool[Math.floor(Math.random() * pool.length)];
+            if (!pick) return;
+            setSelected(pick); setHighlightId(pick.id);
+            lockedRef.current = pick.id; updateUrl(pick.id);
+            setViewMode("graph");
+            setTimeout(() => {
+              const liveNode = simNodesRef.current?.find(d => d.id === pick.id);
+              if (liveNode) zoomToNode(liveNode);
+            }, 100);
+          }} style={{
+            fontSize: "11px", padding: isMobile ? "6px 12px" : "4px 10px",
+            background: "transparent", border: "1px solid #ddd",
+            borderRadius: "20px", cursor: "pointer", color: "#888",
+            marginLeft: "6px", whiteSpace: "nowrap",
+            minHeight: isMobile ? "36px" : "auto", fontFamily: "inherit",
+          }} title="Jump to a random node">
+            ✦ Surprise me
+          </button>
 
           <a href="mailto:your@email.com?subject=Knowledge Network feedback" target="_blank" rel="noreferrer" style={{
             fontSize: "11px", padding: isMobile ? "6px 12px" : "4px 10px",
