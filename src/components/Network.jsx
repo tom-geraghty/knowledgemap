@@ -438,7 +438,7 @@ export default function Network() {
     };
     // Measure after paint so newly rendered elements are in the DOM
     requestAnimationFrame(measure);
-  }, [activeTheme, activeAuthor, activeType]);
+  }, [activeTheme, activeAuthor]);
 
   const pillRowRef = useRef(null);
   const [pillRowAtEnd, setPillRowAtEnd] = useState(false);
@@ -963,7 +963,6 @@ export default function Network() {
                   updateModeUrl(mode);
                   setActiveTheme("all"); updateThemeUrl("all");
                   setActiveAuthor("All authors"); updateAuthorUrl("All authors");
-                  setActiveType("all");
                   setSelected(null); setHighlightId(null);
                   setTappedBoth(null); lockedRef.current = null;
                   setSearchQuery(""); setSearchResults([]);
@@ -1000,7 +999,7 @@ export default function Network() {
           </div>
 
           {/* Reset button — visible when anything is filtered or selected */}
-          {(activeTheme !== "all" || activeAuthor !== "All authors" || activeType !== "all" || searchQuery || selected) && (
+          {(activeTheme !== "all" || activeAuthor !== "All authors" || searchQuery || selected) && (
             <button onClick={() => {
               setActiveTheme("all"); updateThemeUrl("all");
               setActiveAuthor("All authors"); updateAuthorUrl("All authors");
@@ -1173,7 +1172,7 @@ export default function Network() {
           <span style={{ color: filteredNodes.length === 0 ? "#e05a5a" : DM.textMuted, fontWeight: filteredNodes.length === 0 ? 600 : 400 }}>
             {filteredNodes.length} result{filteredNodes.length !== 1 ? "s" : ""}
           </span>
-          <button onClick={() => { setActiveTheme("all"); updateThemeUrl("all"); setActiveAuthor("All authors"); updateAuthorUrl("All authors"); setActiveType("all"); setShowThemeOverlay(false); }}
+          <button onClick={() => { setActiveTheme("all"); updateThemeUrl("all"); setActiveAuthor("All authors"); updateAuthorUrl("All authors") setShowThemeOverlay(false); }}
             style={{ fontSize: "10px", color: DM.textFaint, background: "none", border: "none", cursor: "pointer", marginLeft: "auto" }}>
             Clear ×
           </button>
