@@ -1163,7 +1163,7 @@ export default function Network() {
           <span style={{ color: filteredNodes.length === 0 ? "#e05a5a" : DM.textMuted, fontWeight: filteredNodes.length === 0 ? 600 : 400 }}>
             {filteredNodes.length} result{filteredNodes.length !== 1 ? "s" : ""}
           </span>
-          <button onClick={() => { setActiveTheme("all"); updateThemeUrl("all"); setActiveAuthor("All authors"); updateAuthorUrl("All authors") setShowThemeOverlay(false); }}
+          <button onClick={() => { setActiveTheme("all"); updateThemeUrl("all"); setActiveAuthor("All authors"); updateAuthorUrl("All authors"); setShowThemeOverlay(false); }}
             style={{ fontSize: "10px", color: DM.textFaint, background: "none", border: "none", cursor: "pointer", marginLeft: "auto" }}>
             Clear ×
           </button>
