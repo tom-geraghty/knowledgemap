@@ -199,16 +199,7 @@ function DetailPanel({ node, onClose, onSelectNode, onSelectPaper, copied, setCo
                     Read article →
                   </a>
                 )}
-                {graphMode === "papers" && (
-                  <span style={{
-                    fontSize: "10px", padding: "2px 7px", borderRadius: "10px", fontWeight: 500,
-                    background: node.openAccess ? "#1D9E7522" : "#88878022",
-                    border: `0.5px solid ${node.openAccess ? "#1D9E75" : "#aaa"}`,
-                    color: node.openAccess ? "#1D9E75" : "#888",
-                  }}>
-                    {node.openAccess ? "✓ Open access" : "Paywalled"}
-                  </span>
-                )}
+
                 {node.journal && (
                   <span style={{ fontSize: "11px", color: DM.textMuted, fontStyle: "italic" }}>
                     {node.journal}
@@ -264,7 +255,7 @@ function DetailPanel({ node, onClose, onSelectNode, onSelectPaper, copied, setCo
                 if (relatedPapers.length === 0) return null;
                 return (
                   <div style={{ marginTop: "8px", paddingTop: "8px", borderTop: "1px solid #f0f0f0" }}>
-                    <div style={{ fontSize: "10px", color: "#bbb", marginBottom: "4px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Related papers</div>
+
                     <div style={{ display: "flex", flexWrap: "wrap", gap: "4px" }}>
                       {relatedPapers.map(paper => (
                         <button key={paper.id}
@@ -359,7 +350,7 @@ export default function Network() {
   // Read mode from URL first — needed to pick the right dataset for other initialisers
   const getInitialModeFromUrl = () => {
     const m = new URLSearchParams(window.location.search).get("mode");
-    return m === "papers" ? "papers" : "articles";
+    return "articles";
   };
   const initialMode = getInitialModeFromUrl();
   // ── Lazy-loaded papers data ─────────────────────────────────────────────
@@ -957,7 +948,7 @@ export default function Network() {
               display: "flex", borderRadius: "20px", border: `1px solid ${DM.border}`,
               overflow: "hidden", marginLeft: isMobile ? "auto" : "8px",
             }}>
-              {[["articles", "Articles"], ["papers", "Papers"]].map(([mode, label]) => (
+              {[["articles", "Articles"]].map(([mode, label]) => (
                 <button key={mode} onClick={() => {
                   setGraphMode(mode);
                   updateModeUrl(mode);
