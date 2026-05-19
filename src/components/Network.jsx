@@ -3,6 +3,8 @@ import * as d3 from "d3";
 import { THEMES } from "../data/themes";
 import { RAW_NODES } from "../data/nodes";
 import { RAW_LINKS } from "../data/links";
+import pkgJson from "../../package.json";
+
 // Feature flags
 const ENABLE_PAPERS_MODE = true; // set to true to show the Articles/Papers toggle
 
@@ -13,9 +15,10 @@ const ARTICLE_NODES = RAW_NODES.filter(n => {
   return true;
 });
 
-
 function getNodeColor(node, themes) {
-  return node.themes[0] ? (themes[node.themes[0]]?.color || "#888") : "#888";
+  // Paper nodes use topic[], article nodes use themes[]
+  const key = node.topic ? node.topic[0] : node.themes?.[0];
+  return key ? (themes[key]?.color || "#888") : "#888";
 }
 
 function getNodeDomain(node) {
@@ -35,7 +38,7 @@ function renderMultiThemeNode(selection, getR, themes) {
   selection.each(function (d) {
     const g = d3.select(this);
     const r = getR(d);
-    const nodeThemes = d.themes.filter(t => themes[t]);
+    const nodeThemes = (d.topic || d.themes || []).filter(t => themes[t]);
     if (nodeThemes.length <= 1) {
       const ds = DOMAIN_STYLE[getNodeDomain(d)];
       const circ = g.append("circle")
@@ -87,26 +90,24 @@ function buildDegrees(nodes, links) {
 
 const ARTICLE_NEIGHBOURS = buildNeighbours(ARTICLE_NODES, RAW_LINKS);
 const ARTICLE_DEGREES    = buildDegrees(ARTICLE_NODES, RAW_LINKS);
-const PAPER_NEIGHBOURS   = {};
-const PAPER_DEGREES      = {};
 const TOP_N = 10;
 const ARTICLE_HUB_IDS = new Set(Object.entries(ARTICLE_DEGREES).sort((a, b) => b[1] - a[1]).slice(0, TOP_N).map(([id]) => id));
-const PAPER_HUB_IDS   = new Set();
 
 // Node radius — larger on mobile for touch targets
 function nodeR(d, isMobile) {
   return isMobile ? 12 + d.weight * 2 : 7 + d.weight * 1.5;
 }
 
-function DetailPanel({ node, onClose, onSelectNode, copied, setCopied, getConnected, isMobile, graphMode, THEMES_MAP, HUB_IDS, DEGREES, ARTICLE_NODES, getNodeColor }) {
-  const [showAllConnected, setShowAllConnected] = useState(false);
+function DetailPanel({ node, onClose, onSelectNode, onSelectPaper, copied, setCopied, getConnected, isMobile, graphMode, THEMES_MAP, HUB_IDS, DEGREES, ARTICLE_NODES, PAPER_NODES, getNodeColor, DM }) {
   const connected = getConnected(node);
   const [featuredImage, setFeaturedImage] = useState(null);
+  const [showAllConnected, setShowAllConnected] = useState(false);
 
   useEffect(() => {
     setFeaturedImage(null);
-    if (!node.slug || !WORDPRESS_BASE_URL) return;
-    fetch(`${WORDPRESS_BASE_URL}/wp-json/wp/v2/posts?slug=${node.slug}&_embed=true`)
+    setShowAllConnected(false);
+    if (!node.slug) return;
+    fetch(`https://psychsafety.com/wp-json/wp/v2/posts?slug=${node.slug}&_embed=true`)
       .then(r => r.json())
       .then(data => {
         const img = data?.[0]?._embedded?.['wp:featuredmedia']?.[0]?.source_url;
@@ -118,12 +119,12 @@ function DetailPanel({ node, onClose, onSelectNode, copied, setCopied, getConnec
   return (
     <div style={{
       position: "fixed", bottom: 0, left: 0, right: 0,
-      background: "white", borderTop: "1px solid #eee",
+      background: DM.surface, borderTop: `1px solid ${DM.border}`,
       padding: isMobile ? "16px" : "12px 16px",
       zIndex: 30, boxShadow: "0 -4px 16px rgba(0,0,0,0.06)",
       maxHeight: isMobile ? "60vh" : "auto",
       overflowY: isMobile ? "auto" : "visible",
-    }}>
+    }} data-detail-panel>
       {isMobile && (
         <div style={{ width: "40px", height: "4px", background: "#ddd", borderRadius: "2px", margin: "0 auto 12px" }} />
       )}
@@ -137,7 +138,7 @@ function DetailPanel({ node, onClose, onSelectNode, copied, setCopied, getConnec
             )}
           </div>
           {node.title && (
-            <div style={{ fontSize: "12px", color: "#555", fontStyle: "italic", marginBottom: "8px", paddingLeft: "18px" }}>
+            <div style={{ fontSize: "12px", color: DM.textMuted, fontStyle: "italic", marginBottom: "8px", paddingLeft: "18px" }}>
               {node.title}
             </div>
           )}
@@ -147,7 +148,7 @@ function DetailPanel({ node, onClose, onSelectNode, copied, setCopied, getConnec
                 <img src={featuredImage} alt={node.label}
                   style={{ width: isMobile ? "100%" : "140px", height: isMobile ? "140px" : "90px",
                     objectFit: "cover", borderRadius: "6px", display: "block",
-                    border: "1px solid #eee", transition: "opacity 0.15s",
+                    border: `1px solid ${DM.border}`, transition: "opacity 0.15s",
                   }}
                   onMouseOver={e => e.target.style.opacity = "0.85"}
                   onMouseOut={e => e.target.style.opacity = "1"}
@@ -156,9 +157,10 @@ function DetailPanel({ node, onClose, onSelectNode, copied, setCopied, getConnec
             )}
             <div style={{ flex: 1 }}>
               <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", alignItems: "center", marginBottom: "8px" }}>
-                <span style={{ fontSize: "12px", color: "#888" }}>{node.author}</span>
+                <span style={{ fontSize: "12px", color: DM.textMuted }}>{node.author}</span>
                 <span style={{ color: "#ddd", margin: "0 2px" }}>·</span>
-                {node.themes.filter(t => THEMES_MAP[t]).map(t => (
+
+                {(node.topic || node.themes || []).filter(t => THEMES_MAP[t]).map(t => (
                   <span key={t} style={{
                     fontSize: "11px", padding: "2px 8px", borderRadius: "10px",
                     background: THEMES_MAP[t].color + "22", border: `0.5px solid ${THEMES_MAP[t].color}`,
@@ -166,14 +168,35 @@ function DetailPanel({ node, onClose, onSelectNode, copied, setCopied, getConnec
                   }}>{THEMES_MAP[t].label}</span>
                 ))}
               </div>
-              <div style={{ fontSize: isMobile ? "14px" : "13px", color: "#444", lineHeight: 1.6, marginBottom: "8px" }}>
-                {node.desc}
-              </div>
+              {(() => {
+                const LIMIT = isMobile ? 300 : 500;
+                const needsTruncation = node.desc && node.desc.length > LIMIT;
+                const displayDesc = needsTruncation && !descExpanded
+                  ? node.desc.slice(0, LIMIT).replace(/\s+\S*$/, "") + "…"
+                  : node.desc;
+                return (
+                  <div style={{ marginBottom: "8px" }}>
+                    <div style={{ fontSize: isMobile ? "14px" : "13px", color: DM.text, lineHeight: 1.6 }}>
+                      {displayDesc}
+                    </div>
+                    {needsTruncation && (
+                      <button onClick={() => setDescExpanded(e => !e)}
+                        style={{
+                          background: "none", border: "none", padding: "2px 0",
+                          fontSize: "12px", color: DM.link, cursor: "pointer",
+                          fontFamily: "inherit", marginTop: "2px",
+                        }}>
+                        {descExpanded ? "Show less ↑" : "Show more ↓"}
+                      </button>
+                    )}
+                  </div>
+                );
+              })()}
               <div style={{ display: "flex", gap: "12px", alignItems: "center", flexWrap: "wrap", marginBottom: "10px" }}>
                 {node.url && node.url !== "#" && (
                   <a href={node.url} target="_blank" rel="noreferrer"
                     style={{ fontSize: "13px", color: "#378ADD", textDecoration: "none", fontWeight: 500 }}>
-                    {graphMode === "papers" ? "View paper →" : "Read article →"}
+                    Read article →
                   </a>
                 )}
                 {graphMode === "papers" && (
@@ -187,7 +210,7 @@ function DetailPanel({ node, onClose, onSelectNode, copied, setCopied, getConnec
                   </span>
                 )}
                 {node.journal && (
-                  <span style={{ fontSize: "11px", color: "#888", fontStyle: "italic" }}>
+                  <span style={{ fontSize: "11px", color: DM.textMuted, fontStyle: "italic" }}>
                     {node.journal}
                   </span>
                 )}
@@ -209,7 +232,7 @@ function DetailPanel({ node, onClose, onSelectNode, copied, setCopied, getConnec
                   }} style={{
                     fontSize: "10px", padding: "2px 8px", borderRadius: "10px", cursor: "pointer",
                     background: copied ? "#f0f9f0" : "transparent",
-                    border: `0.5px solid ${copied ? "#2a7a2a" : "#ddd"}`,
+                    border: `0.5px solid ${copied ? "#2a7a2a" : DM.border}`,
                     color: copied ? "#2a7a2a" : "#888",
                   }}>
                     {copied ? "✓ Copied" : "Copy citation"}
@@ -218,7 +241,7 @@ function DetailPanel({ node, onClose, onSelectNode, copied, setCopied, getConnec
               )}
               {node.relatedArticles?.length > 0 && (
                 <div style={{ marginTop: "8px", paddingTop: "8px", borderTop: "1px solid #f0f0f0" }}>
-                  <div style={{ fontSize: "10px", color: "#bbb", marginBottom: "4px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Related articles</div>
+                  <div style={{ fontSize: "10px", color: "#bbb", marginBottom: "4px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Related psychsafety.com articles</div>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: "4px" }}>
                     {node.relatedArticles.map(aid => {
                       const article = ARTICLE_NODES.find(n => n.id === aid);
@@ -236,12 +259,35 @@ function DetailPanel({ node, onClose, onSelectNode, copied, setCopied, getConnec
                   </div>
                 </div>
               )}
+              {graphMode === "articles" && (() => {
+                const relatedPapers = [];
+                if (relatedPapers.length === 0) return null;
+                return (
+                  <div style={{ marginTop: "8px", paddingTop: "8px", borderTop: "1px solid #f0f0f0" }}>
+                    <div style={{ fontSize: "10px", color: "#bbb", marginBottom: "4px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Related papers</div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: "4px" }}>
+                      {relatedPapers.map(paper => (
+                        <button key={paper.id}
+                          onClick={() => onSelectPaper(paper)}
+                          title={paper.title}
+                          style={{
+                            fontSize: "11px", color: "#888780", cursor: "pointer",
+                            padding: "2px 7px", borderRadius: "10px", fontFamily: "inherit",
+                            background: "#88878011", border: "0.5px solid #88878044",
+                          }}>
+                          {paper.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           </div>
           {connected.length > 0 && (
             <div style={{ marginTop: "4px" }}>
               <div style={{ fontSize: "10px", color: "#bbb", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "6px" }}>
-                Related {graphMode === "papers" ? "papers" : "articles"}
+                Related articles
               </div>
               <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
                 {(showAllConnected ? connected : connected.slice(0, isMobile ? 3 : 5)).map(rel => (
@@ -252,7 +298,7 @@ function DetailPanel({ node, onClose, onSelectNode, copied, setCopied, getConnec
                       padding: "4px 8px", borderRadius: "6px", cursor: "pointer",
                       border: `1px solid ${getNodeColor(rel, THEMES_MAP)}44`,
                       background: getNodeColor(rel, THEMES_MAP) + "11",
-                      fontSize: "11px", color: "#333", fontWeight: 400,
+                      fontSize: "11px", color: DM.text, fontWeight: 400,
                       textAlign: "left", maxWidth: isMobile ? "140px" : "180px",
                     }}
                     title={rel.desc}
@@ -267,7 +313,7 @@ function DetailPanel({ node, onClose, onSelectNode, copied, setCopied, getConnec
                 ))}
                 {connected.length > (isMobile ? 3 : 5) && !showAllConnected && (
                   <button onClick={() => setShowAllConnected(true)} style={{
-                    fontSize: "11px", color: "#888", alignSelf: "center", cursor: "pointer",
+                    fontSize: "11px", color: DM.textMuted, alignSelf: "center", cursor: "pointer",
                     background: "transparent", border: "none", padding: "2px 4px", fontFamily: "inherit",
                     textDecoration: "underline", textDecorationStyle: "dotted",
                   }}>
@@ -281,14 +327,15 @@ function DetailPanel({ node, onClose, onSelectNode, copied, setCopied, getConnec
         <div style={{ display: "flex", gap: "6px", alignItems: "center", flexShrink: 0, marginLeft: "12px" }}>
           <button
             onClick={() => {
-              navigator.clipboard.writeText(window.location.href).then(() => {
+              const cleanUrl = `${window.location.origin}${window.location.pathname}?node=${node.id}`;
+              navigator.clipboard.writeText(cleanUrl).then(() => {
                 setCopied(true);
                 setTimeout(() => setCopied(false), 2000);
               });
             }}
             title="Copy link to this article"
             style={{ fontSize: "11px", padding: isMobile ? "8px 12px" : "4px 10px",
-              cursor: "pointer", borderRadius: "8px", border: "1px solid #ddd",
+              cursor: "pointer", borderRadius: "8px", border: `1px solid ${DM.border}`,
               background: copied ? "#f0f9f0" : "transparent",
               color: copied ? "#2a7a2a" : "#888",
               minHeight: isMobile ? "44px" : "auto", whiteSpace: "nowrap",
@@ -298,7 +345,7 @@ function DetailPanel({ node, onClose, onSelectNode, copied, setCopied, getConnec
           <button onClick={onClose} style={{
             fontSize: "20px", lineHeight: 1, padding: isMobile ? "8px 12px" : "4px 8px",
             cursor: "pointer", borderRadius: "8px",
-            border: "1px solid #eee", background: "transparent", color: "#888",
+            border: `1px solid ${DM.border}`, background: "transparent", color: DM.textMuted,
             minWidth: isMobile ? "44px" : "auto", minHeight: isMobile ? "44px" : "auto",
           }}>×</button>
         </div>
@@ -310,19 +357,47 @@ function DetailPanel({ node, onClose, onSelectNode, copied, setCopied, getConnec
 export default function Network() {
   // Read ?node= or ?slug= from URL on load — must be defined before first use
   // Read mode from URL first — needed to pick the right dataset for other initialisers
-  const initialMode = "articles";
+  const getInitialModeFromUrl = () => {
+    const m = new URLSearchParams(window.location.search).get("mode");
+    return m === "papers" ? "papers" : "articles";
+  };
+  const initialMode = getInitialModeFromUrl();
+  // ── Lazy-loaded papers data ─────────────────────────────────────────────
+  const [papersLoading, setPapersLoading] = useState(false);
+  const papersLoadedRef = useRef(false);
+
+
+
+
+  const PAPER_NODES      = [];
+  const PAPER_LINKS      = [];
+
   const initialNodes = ARTICLE_NODES;
   const initialThemesMap = THEMES;
 
+  // Determine if URL is requesting a paper node (by id or slug)
+  // We check ARTICLE_NODES first; if not found there, it must be a paper node (loaded async)
   const getInitialNodeFromUrl = () => {
     const params = new URLSearchParams(window.location.search);
     const nodeId = params.get("node");
     const slug = params.get("slug");
-    if (nodeId) return initialNodes.find(n => n.id === nodeId) || null;
-    if (slug) return initialNodes.find(n => n.slug === slug) || null;
+    // Search article nodes first
+    if (nodeId) {
+      const articleMatch = ARTICLE_NODES.find(n => n.id === nodeId);
+      if (articleMatch) return articleMatch;
+      // Try paper nodes if already loaded
+      return null;
+    }
+    if (slug) {
+      const articleMatch = ARTICLE_NODES.find(n => n.slug === slug);
+      if (articleMatch) return articleMatch;
+      return null;
+    }
     return null;
   };
   const initialNode = getInitialNodeFromUrl();
+
+
 
   const getInitialThemeFromUrl = () => {
     const params = new URLSearchParams(window.location.search);
@@ -346,7 +421,48 @@ export default function Network() {
   const simNodesRef = useRef([]);    // live simulation nodes (mutated in place by D3)
   const [activeTheme, setActiveTheme] = useState(initialTheme);
   const [activeAuthor, setActiveAuthor] = useState(initialAuthor);
+  const [darkMode, setDarkMode] = useState(() => {
+    const stored = localStorage.getItem("psych-dark-mode");
+    if (stored !== null) return stored === "true";
+    return window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? false;
+  });
+  const [aboutTooltip, setAboutTooltip] = useState(false);
+  const [overlayTop, setOverlayTop] = useState(120);
+  // Recalculate theme overlay top position whenever filters change
+  useEffect(() => {
+    const measure = () => {
+      const filterBar = document.querySelector("[data-filter-bar-showing]");
+      const header = document.querySelector("[data-header]");
+      const bottom = filterBar
+        ? filterBar.getBoundingClientRect().bottom
+        : (header?.getBoundingClientRect().bottom || 120);
+      setOverlayTop(bottom + 4);
+    };
+    // Measure after paint so newly rendered elements are in the DOM
+    requestAnimationFrame(measure);
+  }, [activeTheme, activeAuthor, activeType]);
+
+  const pillRowRef = useRef(null);
+  const [pillRowAtEnd, setPillRowAtEnd] = useState(false);
   const [graphMode, setGraphMode] = useState(initialMode); // "articles" | "papers"
+
+  // Design tokens — swapped by dark mode
+  const DM = {
+    bg:          darkMode ? "#16181d" : "#f7f5f2",
+    surface:     darkMode ? "#1e2028" : "#ffffff",
+    surfaceAlt:  darkMode ? "#262830" : "#f7f5f2",
+    border:      darkMode ? "#2e3040" : "#eeeeee",
+    text:        darkMode ? "#e8e6e2" : "#222222",
+    textMuted:   darkMode ? "#888780" : "#888780",
+    textFaint:   darkMode ? "#555860" : "#bbbbbb",
+    link:        darkMode ? "#6aadee" : "#378ADD",
+    nodeLabel:   darkMode ? "#cccccc" : "#444444",
+    linkStroke:  darkMode ? "#3a3d4a" : "#dddddd",
+    pillBg:      darkMode ? "#262830" : "#f5f5f5",
+    pillBorder:  darkMode ? "#3a3d4a" : "#e0e0e0",
+    inputBg:     darkMode ? "#1e2028" : "#ffffff",
+    shadow:      darkMode ? "0 2px 12px rgba(0,0,0,0.5)" : "0 2px 8px rgba(0,0,0,0.08)",
+  };
 
   // Mode-derived data — switches the active dataset
   const NODES      = ARTICLE_NODES;
@@ -379,7 +495,7 @@ export default function Network() {
 
   const themeCounts = useMemo(() => {
     const counts = {};
-    NODES.forEach(n => n.themes.forEach(t => { counts[t] = (counts[t] || 0) + 1; }));
+    NODES.forEach(n => (n.topic || n.themes || []).forEach(t => { counts[t] = (counts[t] || 0) + 1; }));
     return counts;
   }, [NODES]);
 
@@ -436,8 +552,12 @@ export default function Network() {
     const W = svgRef.current.clientWidth || window.innerWidth;
     const H = svgRef.current.clientHeight || window.innerHeight - 130;
     const scale = 1.8;
+    // Offset vertical centre upward by half the detail panel height so the
+    // node sits in the middle of the visible area above the panel
+    const panelEl = document.querySelector("[data-detail-panel]");
+    const panelH = panelEl ? panelEl.getBoundingClientRect().height : 0;
     const tx = W / 2 - scale * node.x;
-    const ty = H / 2 - scale * node.y;
+    const ty = (H - panelH) / 2 - scale * node.y;
     svg.transition().duration(600).call(
       zoomRef.current.transform,
       d3.zoomIdentity.translate(tx, ty).scale(scale)
@@ -447,7 +567,7 @@ export default function Network() {
   const zoomToTheme = useCallback((themeId) => {
     if (!svgRef.current || !zoomRef.current) return;
     const liveNodes = simNodesRef.current
-      .filter(d => d.themes?.includes(themeId) && d.x != null && d.y != null);
+      .filter(d => (d.topic || d.themes || []).includes(themeId) && d.x != null && d.y != null);
     if (!liveNodes.length) return;
 
     const xs = liveNodes.map(d => d.x);
@@ -474,18 +594,51 @@ export default function Network() {
     );
   }, []);
 
+  const zoomToFit = useCallback(() => {
+    if (!svgRef.current || !zoomRef.current) return;
+    const liveNodes = (simNodesRef.current || []).filter(d => d.x != null && d.y != null);
+    if (!liveNodes.length) return;
+    const xs = liveNodes.map(d => d.x);
+    const ys = liveNodes.map(d => d.y);
+    const x0 = Math.min(...xs), x1 = Math.max(...xs);
+    const y0 = Math.min(...ys), y1 = Math.max(...ys);
+    const W = svgRef.current.clientWidth || window.innerWidth;
+    const H = svgRef.current.clientHeight || window.innerHeight - 130;
+    const padding = 80;
+    const scaleX = (W - padding * 2) / (x1 - x0 || 1);
+    const scaleY = (H - padding * 2) / (y1 - y0 || 1);
+    const scale = Math.min(Math.max(Math.min(scaleX, scaleY), 0.3), 1.5);
+    const cx = (x0 + x1) / 2;
+    const cy = (y0 + y1) / 2;
+    const tx = W / 2 - scale * cx;
+    const ty = H / 2 - scale * cy;
+    d3.select(svgRef.current).transition().duration(600).call(
+      zoomRef.current.transform,
+      d3.zoomIdentity.translate(tx, ty).scale(scale)
+    );
+  }, []);
+
+  const zoomBy = useCallback((factor) => {
+    if (!svgRef.current || !zoomRef.current) return;
+    d3.select(svgRef.current).transition().duration(250).call(
+      zoomRef.current.scaleBy, factor
+    );
+  }, []);
+
   const handleTheme = useCallback((t) => {
     if (t === "all") {
       setActiveTheme("all"); updateThemeUrl("all");
       setShowThemeOverlay(false);
+      setTimeout(() => zoomToFit(), 50);
     } else {
       setActiveTheme(t); updateThemeUrl(t);
       setShowThemeOverlay(true);
       setTimeout(() => zoomToTheme(t), 50);
     }
     setSelected(null); setTappedBoth(null); setHighlightId(null);
-  }, [updateThemeUrl, zoomToTheme]);
+  }, [updateThemeUrl, zoomToTheme, zoomToFit]);
   const handleAuthor = useCallback((a) => { setActiveAuthor(a); updateAuthorUrl(a); setSelected(null); setTappedBoth(null); setHighlightId(null); }, [updateAuthorUrl]);
+
 
   const handleSearch = useCallback((q) => {
     setSearchQuery(q);
@@ -512,7 +665,7 @@ export default function Network() {
   }, [viewMode, updateUrl]);
 
   const isNodeVisible = useCallback((node) => {
-    const themeOk = activeTheme === "all" || node.themes.includes(activeTheme);
+    const themeOk = activeTheme === "all" || (node.topic || node.themes || []).includes(activeTheme);
     const authorOk = activeAuthor === "All authors" || node.author === activeAuthor;
     return themeOk && authorOk;
   }, [activeTheme, activeAuthor]);
@@ -555,19 +708,25 @@ export default function Network() {
     gRef.current = g;
     simNodesRef.current = nodes;
 
-    svg.call(d3.zoom()
+    const zoomBehavior = d3.zoom()
       .scaleExtent([0.1, 4])
       .touchable(true)
-      .on("zoom", e => g.attr("transform", e.transform)));
+      .on("zoom", e => g.attr("transform", e.transform));
+    zoomRef.current = zoomBehavior;
+    svg.call(zoomBehavior);
 
+    // Use lower alpha if nodes have precomputed positions — converges almost instantly
+    const hasLayout = nodes.length > 0 && nodes[0].x != null;
     const sim = d3.forceSimulation(nodes)
       .force("link", d3.forceLink(links).id(d => d.id).distance(d => 100 - (d.strength || 1) * 8).strength(d => (d.strength || 1) * 0.1))
       .force("charge", d3.forceManyBody().strength(d => -120 - d.weight * 10))
       .force("center", d3.forceCenter(W / 2, H / 2))
-      .force("collision", d3.forceCollide().radius(d => (isMobile ? 28 : 22) + d.weight * 2));
+      .force("collision", d3.forceCollide().radius(d => (isMobile ? 28 : 22) + d.weight * 2))
+      .alpha(hasLayout ? 0.05 : 1)
+      .alphaDecay(hasLayout ? 0.04 : 0.0228);
 
     const linkSel = g.append("g").selectAll("line").data(links).join("line")
-      .attr("stroke", "#ccc").attr("stroke-width", d => (d.strength || 1) * 0.8)
+      .attr("stroke", DM.linkStroke).attr("stroke-width", d => (d.strength || 1) * 0.8)
       .attr("opacity", 0.28).attr("class", "link-line");
 
     const nodeG = g.append("g").selectAll("g").data(nodes).join("g")
@@ -641,8 +800,9 @@ export default function Network() {
 
     const labelSel = nodeG.append("text")
       .attr("text-anchor", "middle")
-      .attr("font-size", d => isMobile ? Math.max(9, 8 + d.weight * 0.4) : Math.max(8, 7 + d.weight * 0.3))
-      .attr("fill", "#444").attr("opacity", 0.9)
+      .attr("font-size", d => isMobile ? Math.max(9, 7 + d.weight * 0.6) : Math.max(8, 6.5 + d.weight * 0.65))
+      .attr("fill", DM.nodeLabel).attr("opacity", 0.9)
+      .attr("font-weight", d => HUB_IDS.has(d.id) ? 600 : 400)
       .attr("pointer-events", "none").attr("class", "node-label");
 
     labelSel.each(function (d) {
@@ -666,7 +826,7 @@ export default function Network() {
           const nd = nodes.find(n => n.id === initialNode.id);
           if (nd) { zoomedToInitial = true; zoomToNode(nd); }
         }
-      }, 2500);
+      }, hasLayout ? 400 : 2500);
     }
     sim.on("tick", () => {
       linkSel.attr("x1", d => d.source.x).attr("y1", d => d.source.y)
@@ -688,7 +848,7 @@ export default function Network() {
 
     svg.on("click", () => { setSelected(null); setTappedBoth(null); setHighlightId(null); lockedRef.current = null; updateUrl(null); });
     return () => { sim.stop(); svg.selectAll("*").remove(); clearTimeout(fallbackTimer); };
-  }, [viewMode, isMobile, graphMode]);
+  }, [viewMode, isMobile, graphMode, darkMode]);
 
   useEffect(() => {
     const svg = d3.select(svgRef.current);
@@ -700,7 +860,7 @@ export default function Network() {
       d3.select(this)
         .attr("opacity", op)
         .attr("stroke-width", isActive ? (d.strength || 1) * 1.4 : (d.strength || 1) * 0.8)
-        .attr("stroke", isActive ? "#999" : "#ccc");
+        .attr("stroke", isActive ? (darkMode ? "#aaaaaa" : "#999999") : DM.linkStroke);
     });
   }, [getNodeOpacity, getLinkOpacity]);
 
@@ -720,7 +880,7 @@ export default function Network() {
   // Filtered nodes for list view
   const filteredNodes = useMemo(() => {
     const filtered = NODES.filter(n => {
-      const themeOk = activeTheme === "all" || n.themes.includes(activeTheme);
+      const themeOk = activeTheme === "all" || (n.topic || n.themes || []).includes(activeTheme);
       const authorOk = activeAuthor === "All authors" || n.author === activeAuthor;
       const searchOk = !searchQuery.trim() ||
         n.label.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -759,17 +919,33 @@ export default function Network() {
 
 
   return (
-    <div style={{ fontFamily: "system-ui, sans-serif", background: "#fff", minHeight: "100vh" }}>
+    <div style={{ fontFamily: "system-ui, sans-serif", background: DM.bg, minHeight: "100vh", color: DM.text }}>
 
       {/* Header */}
-      <div style={{ padding: isMobile ? "10px 12px 8px" : "10px 14px 8px", borderBottom: "1px solid #eee" }}>
+      <div data-header style={{ padding: isMobile ? "10px 12px 8px" : "10px 14px 8px", borderBottom: `1px solid ${DM.border}`, background: DM.surface }}>
 
         {/* Title + view toggle + search */}
         <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "7px", flexWrap: "wrap" }}>
           {!isMobile && (
-            <span style={{ fontSize: "14px", fontWeight: 600, color: "#111", whiteSpace: "nowrap" }}>
-              Knowledge Network
-            </span>
+            <>
+              <a href="https://psychsafety.com" target="_blank" rel="noreferrer"
+                style={{ display: "flex", alignItems: "center", textDecoration: "none", flexShrink: 0, background: "#1a1a2e", borderRadius: "6px", padding: "4px 8px" }}>
+                <img src="https://psychsafety.com/wp-content/uploads/2019/04/psych-safety-logo-white-300x222.png"
+                  alt="psychsafety.com" style={{ width: "48px", height: "auto", display: "block" }}
+                  onError={e => { e.target.style.display = "none"; }} />
+              </a>
+              <span style={{ fontSize: "14px", fontWeight: 600, color: DM.text, whiteSpace: "nowrap" }}>
+                Psychological Safety Knowledge Network
+              </span>
+            </>
+          )}
+          {isMobile && (
+            <a href="https://psychsafety.com" target="_blank" rel="noreferrer"
+              style={{ display: "flex", alignItems: "center", textDecoration: "none", flexShrink: 0, background: "#1a1a2e", borderRadius: "6px", padding: "3px 6px" }}>
+              <img src="https://psychsafety.com/wp-content/uploads/2019/04/psych-safety-logo-white-300x222.png"
+                alt="psychsafety.com" style={{ width: "36px", height: "auto", display: "block" }}
+                onError={e => { e.target.style.display = "none"; }} />
+            </a>
           )}
           {!isMobile && (
             <span style={{ fontSize: "10px", color: "#ccc", whiteSpace: "nowrap" }}>
@@ -780,7 +956,7 @@ export default function Network() {
           {/* Articles / Papers mode toggle */}
           {ENABLE_PAPERS_MODE && (
             <div style={{
-              display: "flex", borderRadius: "20px", border: "1px solid #ddd",
+              display: "flex", borderRadius: "20px", border: `1px solid ${DM.border}`,
               overflow: "hidden", marginLeft: isMobile ? "auto" : "8px",
             }}>
               {[["articles", "Articles"], ["papers", "Papers"]].map(([mode, label]) => (
@@ -789,6 +965,7 @@ export default function Network() {
                   updateModeUrl(mode);
                   setActiveTheme("all"); updateThemeUrl("all");
                   setActiveAuthor("All authors"); updateAuthorUrl("All authors");
+                  setActiveType("all");
                   setSelected(null); setHighlightId(null);
                   setTappedBoth(null); lockedRef.current = null;
                   setSearchQuery(""); setSearchResults([]);
@@ -800,7 +977,7 @@ export default function Network() {
                   border: "none", cursor: "pointer", fontWeight: graphMode === mode ? 600 : 400,
                   minHeight: isMobile ? "36px" : "auto",
                 }}>
-                  {label}
+                  {mode === "papers" && papersLoading ? "Loading…" : label}
                 </button>
               ))}
             </div>
@@ -808,7 +985,7 @@ export default function Network() {
 
           {/* View mode toggle */}
           <div style={{
-            display: "flex", borderRadius: "20px", border: "1px solid #ddd",
+            display: "flex", borderRadius: "20px", border: `1px solid ${DM.border}`,
             overflow: "hidden", marginLeft: isMobile ? "auto" : "8px",
           }}>
             {["graph", "list"].map(mode => (
@@ -825,7 +1002,7 @@ export default function Network() {
           </div>
 
           {/* Reset button — visible when anything is filtered or selected */}
-          {(activeTheme !== "all" || activeAuthor !== "All authors" || searchQuery || selected) && (
+          {(activeTheme !== "all" || activeAuthor !== "All authors" || activeType !== "all" || searchQuery || selected) && (
             <button onClick={() => {
               setActiveTheme("all"); updateThemeUrl("all");
               setActiveAuthor("All authors"); updateAuthorUrl("All authors");
@@ -834,8 +1011,8 @@ export default function Network() {
               setSearchQuery(""); setSearchResults([]);
               updateUrl(null); setShowThemeOverlay(false);            }} style={{
               fontSize: "11px", padding: isMobile ? "6px 12px" : "4px 10px",
-              background: "transparent", border: "1px solid #ddd",
-              borderRadius: "20px", cursor: "pointer", color: "#888",
+              background: "transparent", border: `1px solid ${DM.border}`,
+              borderRadius: "20px", cursor: "pointer", color: DM.textMuted,
               marginLeft: "6px", minHeight: isMobile ? "36px" : "auto",
             }}>
               ↺ Reset
@@ -855,17 +1032,17 @@ export default function Network() {
             }, 100);
           }} style={{
             fontSize: "11px", padding: isMobile ? "6px 12px" : "4px 10px",
-            background: "transparent", border: "1px solid #ddd",
-            borderRadius: "20px", cursor: "pointer", color: "#888",
+            background: "transparent", border: `1px solid ${DM.border}`,
+            borderRadius: "20px", cursor: "pointer", color: DM.textMuted,
             marginLeft: "6px", whiteSpace: "nowrap",
             minHeight: isMobile ? "36px" : "auto", fontFamily: "inherit",
           }} title="Jump to a random node">
             ✦ Surprise me
           </button>
 
-          <a href="mailto:your@email.com?subject=Knowledge Network feedback" target="_blank" rel="noreferrer" style={{
+          <a href="https://tally.so/r/Zjvpby" target="_blank" rel="noreferrer" style={{
             fontSize: "11px", padding: isMobile ? "6px 12px" : "4px 10px",
-            border: "1px solid #ddd", borderRadius: "20px", color: "#888",
+            border: `1px solid ${DM.border}`, borderRadius: "20px", color: DM.textMuted,
             textDecoration: "none", marginLeft: "6px", whiteSpace: "nowrap",
             minHeight: isMobile ? "36px" : "auto", display: "inline-flex", alignItems: "center",
           }}>
@@ -874,12 +1051,12 @@ export default function Network() {
 
           {/* Search */}
           <div style={{ position: "relative", marginLeft: isMobile ? "0" : "auto", width: isMobile ? "100%" : "200px" }}>
-            <input type="text" placeholder={graphMode === "papers" ? "Search papers…" : "Search articles…"} value={searchQuery}
+            <input type="text" placeholder="Search articles…" value={searchQuery}
               onChange={e => handleSearch(e.target.value)}
               style={{
                 width: "100%", fontSize: "13px",
                 padding: isMobile ? "8px 14px" : "5px 10px",
-                border: "1px solid #ddd", borderRadius: "20px", outline: "none",
+                border: `1px solid ${DM.border}`, borderRadius: "20px", outline: "none",
                 fontFamily: "inherit", minHeight: isMobile ? "40px" : "auto",
               }} />
             {searchQuery && (
@@ -892,18 +1069,18 @@ export default function Network() {
             {searchResults.length > 0 && (
               <div style={{
                 position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0,
-                background: "white", border: "1px solid #e5e5e5", borderRadius: "8px",
+                background: DM.surface, border: `1px solid ${DM.border}`, borderRadius: "8px",
                 boxShadow: "0 4px 12px rgba(0,0,0,0.1)", zIndex: 50,
               }}>
                 {searchResults.map(n => (
                   <div key={n.id} onClick={() => handleSelectSearch(n)}
                     style={{ padding: "10px 12px", cursor: "pointer", borderBottom: "0.5px solid #f5f5f5", fontSize: "13px" }}
                     onMouseEnter={e => e.currentTarget.style.background = "#f9f9f9"}
-                    onMouseLeave={e => e.currentTarget.style.background = "white"}>
+                    onMouseLeave={e => e.currentTarget.style.background = DM.surface}>
                     <div style={{ fontWeight: 500, color: "#111", marginBottom: "2px" }}>{n.label}</div>
-                    <div style={{ fontSize: "11px", color: "#888", marginBottom: "3px" }}>{n.author}</div>
+                    <div style={{ fontSize: "11px", color: DM.textMuted, marginBottom: "3px" }}>{n.author}</div>
                     <div style={{ display: "flex", gap: "3px", flexWrap: "wrap" }}>
-                      {n.themes.filter(t => THEMES_MAP[t]).map(t => (
+                      {(n.topic || n.themes || []).filter(t => THEMES_MAP[t]).map(t => (
                         <span key={t} style={{
                           fontSize: "9px", padding: "0 5px", borderRadius: "8px",
                           background: THEMES_MAP[t].color + "22", color: THEMES_MAP[t].color,
@@ -920,13 +1097,30 @@ export default function Network() {
 
         {/* Theme filters — horizontal scroll on mobile */}
         <div style={{ position: "relative" }}>
-          <div style={{
-            display: "flex", gap: "4px", flexWrap: isMobile ? "nowrap" : "wrap",
-            overflowX: isMobile ? "auto" : "visible",
-            paddingBottom: isMobile ? "4px" : "0",
-            marginBottom: "5px",
-            WebkitOverflowScrolling: "touch",
-          }}>
+          {/* Fade indicator — only on mobile, hides once scrolled to end */}
+          {isMobile && !pillRowAtEnd && (
+            <div style={{
+              position: "absolute", right: 0, top: 0, bottom: "4px", width: "40px",
+              background: `linear-gradient(to right, transparent, ${DM.surface})`,
+              pointerEvents: "none", zIndex: 2,
+            }} />
+          )}
+          <div ref={pillRowRef}
+            onScroll={e => {
+              const el = e.currentTarget;
+              setPillRowAtEnd(el.scrollLeft + el.clientWidth >= el.scrollWidth - 8);
+            }}
+            style={{
+              display: "flex", gap: "4px", flexWrap: isMobile ? "nowrap" : "wrap",
+              overflowX: isMobile ? "auto" : "visible",
+              paddingBottom: isMobile ? "4px" : "0",
+              marginBottom: "5px",
+              WebkitOverflowScrolling: "touch",
+            }}>
+
+            <span style={{ fontSize: "10px", color: "#bbb", marginRight: "2px", flexShrink: 0 }}>
+              Theme:
+            </span>
             <Pill color="#555" label="All" count={NODES.length} active={activeTheme === "all"} onClick={() => handleTheme("all")} />
             {Object.entries(THEMES_MAP).map(([key, val]) => (
               <Pill key={key} color={val.color} label={val.label} count={themeCounts[key] || 0}
@@ -934,47 +1128,16 @@ export default function Network() {
             ))}
           </div>
 
-          {/* Theme overlay */}
-          {showThemeOverlay && activeTheme !== "all" && THEMES_MAP[activeTheme] && (() => {
-            const t = THEMES_MAP[activeTheme];
-            return (
-              <div style={{
-                position: "absolute", top: "100%", left: 0, zIndex: 50,
-                background: "white", border: `1px solid ${t.color}44`,
-                borderLeft: `3px solid ${t.color}`,
-                borderRadius: "8px", padding: "12px 14px",
-                boxShadow: "0 4px 20px rgba(0,0,0,0.10)",
-                maxWidth: isMobile ? "calc(100vw - 32px)" : "380px",
-                marginTop: "4px",
-              }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "6px" }}>
-                  <span style={{
-                    fontSize: "13px", fontWeight: 600, color: t.color,
-                  }}>{t.label}</span>
-                  <button onClick={() => setShowThemeOverlay(false)} style={{
-                    background: "none", border: "none", cursor: "pointer",
-                    color: "#bbb", fontSize: "16px", lineHeight: 1, padding: "0 0 0 8px", flexShrink: 0,
-                  }}>×</button>
-                </div>
-                <p style={{ fontSize: "12px", color: "#555", lineHeight: 1.6, margin: "0 0 8px 0" }}>
-                  {t.desc}
-                </p>
-                <span style={{ fontSize: "11px", color: "#aaa" }}>
-                  {themeCounts[activeTheme] || 0} articles
-                </span>
-              </div>
-            );
-          })()}
         </div>
 
-        {/* Author filters — dropdown on mobile, pills on desktop */}
+        {/* Author filters */}
         {isMobile ? (
           <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
             <span style={{ fontSize: "11px", color: "#bbb", flexShrink: 0 }}>Author:</span>
             <select value={activeAuthor} onChange={e => handleAuthor(e.target.value)}
               style={{
-                fontSize: "12px", padding: "6px 10px", border: "1px solid #ddd",
-                borderRadius: "8px", background: "white", color: "#444",
+                fontSize: "12px", padding: "6px 10px", border: `1px solid ${DM.border}`,
+                borderRadius: "8px", background: DM.inputBg, color: DM.text,
                 fontFamily: "inherit", flex: 1, minHeight: "36px",
               }}>
               {AUTHORS.map(a => (
@@ -994,35 +1157,71 @@ export default function Network() {
             ))}
           </div>
         )}
+
       </div>
 
       {/* Active filter indicator — shows when theme AND author both active */}
       {activeTheme !== "all" && activeAuthor !== "All authors" && (
-        <div style={{ padding: "4px 14px", background: "#fafafa", borderBottom: "0.5px solid #f0f0f0", display: "flex", alignItems: "center", gap: "6px", fontSize: "11px", color: "#888" }}>
+        <div data-filter-bar-showing style={{ padding: "4px 14px", background: DM.surfaceAlt, borderBottom: `0.5px solid ${DM.border}`, display: "flex", alignItems: "center", gap: "6px", fontSize: "11px", color: DM.textMuted }}>
           <span>Showing:</span>
           <span style={{ padding: "1px 7px", borderRadius: "10px", background: THEMES_MAP[activeTheme]?.color + "22", border: `0.5px solid ${THEMES_MAP[activeTheme]?.color}`, color: THEMES_MAP[activeTheme]?.color, fontSize: "10px" }}>
             {THEMES_MAP[activeTheme]?.label}
           </span>
-          <span style={{ color: "#ccc" }}>+</span>
-          <span style={{ padding: "1px 7px", borderRadius: "10px", background: "#88888818", border: "0.5px solid #aaa", color: "#666", fontSize: "10px" }}>
+          <span style={{ color: DM.textFaint }}>+</span>
+          <span style={{ padding: "1px 7px", borderRadius: "10px", background: DM.pillBg, border: `0.5px solid ${DM.pillBorder}`, color: DM.textMuted, fontSize: "10px" }}>
             {activeAuthor}
           </span>
-          <button onClick={() => { setActiveTheme("all"); updateThemeUrl("all"); setActiveAuthor("All authors"); updateAuthorUrl("All authors"); setShowThemeOverlay(false); }}
-            style={{ fontSize: "10px", color: "#bbb", background: "none", border: "none", cursor: "pointer", marginLeft: "auto" }}>
+          <span style={{ color: DM.textFaint }}>—</span>
+          <span style={{ color: filteredNodes.length === 0 ? "#e05a5a" : DM.textMuted, fontWeight: filteredNodes.length === 0 ? 600 : 400 }}>
+            {filteredNodes.length} result{filteredNodes.length !== 1 ? "s" : ""}
+          </span>
+          <button onClick={() => { setActiveTheme("all"); updateThemeUrl("all"); setActiveAuthor("All authors"); updateAuthorUrl("All authors"); setActiveType("all"); setShowThemeOverlay(false); }}
+            style={{ fontSize: "10px", color: DM.textFaint, background: "none", border: "none", cursor: "pointer", marginLeft: "auto" }}>
             Clear ×
           </button>
         </div>
       )}
 
+      {/* Theme overlay — rendered outside header so it sits below all header rows */}
+      {showThemeOverlay && activeTheme !== "all" && THEMES_MAP[activeTheme] && (() => {
+        const t = THEMES_MAP[activeTheme];
+        return (
+          <div style={{
+            position: "fixed",
+            top: `${overlayTop}px`,
+            left: isMobile ? "12px" : "14px", zIndex: 50,
+            background: DM.surface, border: `1px solid ${t.color}44`,
+            borderLeft: `3px solid ${t.color}`,
+            borderRadius: "8px", padding: "12px 14px",
+            boxShadow: "0 4px 20px rgba(0,0,0,0.10)",
+            maxWidth: isMobile ? "calc(100vw - 32px)" : "380px",
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "6px" }}>
+              <span style={{ fontSize: "13px", fontWeight: 600, color: t.color }}>{t.label}</span>
+              <button onClick={() => setShowThemeOverlay(false)} style={{
+                background: "none", border: "none", cursor: "pointer",
+                color: "#bbb", fontSize: "16px", lineHeight: 1, padding: "0 0 0 8px", flexShrink: 0,
+              }}>×</button>
+            </div>
+            <p style={{ fontSize: "12px", color: DM.textMuted, lineHeight: 1.6, margin: "0 0 8px 0" }}>
+              {t.desc}
+            </p>
+            <span style={{ fontSize: "11px", color: "#aaa" }}>
+              {themeCounts[activeTheme] || 0} articles
+            </span>
+          </div>
+        );
+      })()}
+
       {/* Graph view */}
       {viewMode === "graph" && (
         <div style={{ position: "relative" }}>
-          <svg ref={svgRef} style={{ width: "100%", display: "block" }} />
+          <div style={{ paddingBottom: "28px" }}><svg ref={svgRef} style={{ width: "100%", display: "block", background: DM.bg }} /></div>
 
           {/* Mobile first-tap hint */}
           {isMobile && tapped && !selected && (
             <div style={{
-              position: "fixed", bottom: "16px", left: "50%", transform: "translateX(-50%)",
+              position: "fixed", bottom: "44px", left: "50%", transform: "translateX(-50%)",
               background: "rgba(0,0,0,0.7)", color: "white", borderRadius: "20px",
               padding: "8px 16px", fontSize: "12px", zIndex: 25, pointerEvents: "none",
             }}>
@@ -1034,7 +1233,7 @@ export default function Network() {
           {!isMobile && tooltip.visible && tooltip.node && (
             <div style={{
               position: "absolute", left: tooltip.x, top: tooltip.y,
-              background: "white", border: "1px solid #e5e5e5", borderRadius: "8px",
+              background: DM.surface, border: `1px solid ${DM.border}`, borderRadius: "8px",
               padding: "8px 12px", fontSize: "12px", maxWidth: "220px",
               pointerEvents: "none", zIndex: 20, boxShadow: "0 2px 8px rgba(0,0,0,0.08)"
             }}>
@@ -1044,7 +1243,7 @@ export default function Network() {
                 {HUB_IDS.has(tooltip.node.id) && <span style={{ color: "#bbb", marginLeft: "6px" }}>· {DEGREES[tooltip.node.id]} connections</span>}
               </div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: "3px" }}>
-                {tooltip.node.themes.filter(t => THEMES_MAP[t]).map(t => (
+                {(tooltip.node.topic || tooltip.node.themes || []).filter(t => THEMES_MAP[t]).map(t => (
                   <span key={t} style={{
                     fontSize: "10px", padding: "1px 5px", borderRadius: "8px",
                     background: THEMES_MAP[t].color + "22", border: `0.5px solid ${THEMES_MAP[t].color}`, color: THEMES_MAP[t].color
@@ -1054,13 +1253,61 @@ export default function Network() {
             </div>
           )}
 
+          {/* Zoom controls */}
+          <div style={{
+            position: "fixed",
+            bottom: selected ? "168px" : "40px",
+            left: "12px",
+            display: "flex", flexDirection: "column", gap: "4px",
+            zIndex: 25,
+          }}>
+            {[["＋", 1.3, "Zoom in"], ["−", 0.77, "Zoom out"], ["⊡", null, "Fit all"]].map(([icon, factor, title]) => (
+              <button key={icon} title={title}
+                onClick={() => factor ? zoomBy(factor) : zoomToFit()}
+                style={{
+                  width: "28px", height: "28px", borderRadius: "6px",
+                  background: DM.surface, border: `1px solid ${DM.border}`,
+                  color: DM.textMuted, fontSize: icon === "⊡" ? "14px" : "16px",
+                  cursor: "pointer", display: "flex", alignItems: "center",
+                  justifyContent: "center", boxShadow: DM.shadow,
+                  fontFamily: "system-ui, sans-serif", lineHeight: 1,
+                }}>
+                {icon}
+              </button>
+            ))}
+          </div>
+
+          {/* Zoom controls */}
+          <div style={{
+            position: "fixed",
+            bottom: selected ? "168px" : "40px",
+            left: "12px",
+            display: "flex", flexDirection: "column", gap: "4px",
+            zIndex: 25,
+          }}>
+            {[["＋", 1.3, "Zoom in"], ["−", 0.77, "Zoom out"], ["⊡", null, "Fit all"]].map(([icon, factor, title]) => (
+              <button key={icon} title={title}
+                onClick={() => factor ? zoomBy(factor) : zoomToFit()}
+                style={{
+                  width: "28px", height: "28px", borderRadius: "6px",
+                  background: DM.surface, border: `1px solid ${DM.border}`,
+                  color: DM.textMuted, fontSize: icon === "⊡" ? "14px" : "16px",
+                  cursor: "pointer", display: "flex", alignItems: "center",
+                  justifyContent: "center", boxShadow: DM.shadow,
+                  fontFamily: "system-ui, sans-serif", lineHeight: 1,
+                }}>
+                {icon}
+              </button>
+            ))}
+          </div>
+
           {/* Legend — desktop only */}
           {!isMobile && (
             <div style={{
-              position: "fixed", bottom: selected ? "140px" : "12px", right: "12px",
-              background: "rgba(255,255,255,0.95)", border: "1px solid #eee", borderRadius: "8px",
-              padding: "10px 12px", fontSize: "10px", color: "#888", lineHeight: 1.9, zIndex: 25,
-              boxShadow: "0 2px 8px rgba(0,0,0,0.06)"
+              position: "fixed", bottom: selected ? "168px" : "40px", right: "12px",
+              background: darkMode ? "rgba(30,32,40,0.97)" : "rgba(255,255,255,0.95)", border: `1px solid ${DM.border}`, borderRadius: "8px",
+              padding: "10px 12px", fontSize: "10px", color: DM.textMuted, lineHeight: 1.9, zIndex: 25,
+              boxShadow: DM.shadow
             }}>
               {Object.entries(THEMES_MAP).map(([key, val]) => (
                 <div key={key} style={{ display: "flex", alignItems: "center", gap: "6px" }}>
@@ -1117,7 +1364,7 @@ export default function Network() {
             );
           })()}
           <div style={{ padding: "10px 16px", fontSize: "11px", color: "#aaa", borderBottom: "0.5px solid #f0f0f0", display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-            <span>{filteredNodes.length} {graphMode === "papers" ? "paper" : "article"}{filteredNodes.length !== 1 ? "s" : ""}</span>
+            <span>{filteredNodes.length} article{filteredNodes.length !== 1 ? "s" : ""}</span>
             <select value={sortBy} onChange={e => setSortBy(e.target.value)}
               style={{ fontSize: "11px", padding: "2px 6px", border: "0.5px solid #ddd", borderRadius: "6px", background: "white", color: "#666", fontFamily: "inherit", cursor: "pointer", marginLeft: "4px" }}>
               <option value="newest">Newest first</option>
@@ -1177,7 +1424,7 @@ export default function Network() {
                     {n.desc}
                   </div>
                   <div style={{ display: "flex", gap: "3px", flexWrap: "wrap", paddingLeft: "14px" }}>
-                    {n.themes.filter(t => THEMES_MAP[t]).map(t => (
+                    {(n.topic || n.themes || []).filter(t => THEMES_MAP[t]).map(t => (
                       <span key={t} style={{
                         fontSize: "10px", padding: "1px 6px", borderRadius: "8px",
                         background: THEMES_MAP[t].color + "22", border: `0.5px solid ${THEMES_MAP[t].color}`,
@@ -1202,8 +1449,68 @@ export default function Network() {
         </div>
       )}
 
+      {/* Footer bar */}
+      <div style={{
+        position: "fixed", bottom: 0, left: 0, right: 0,
+        height: "28px", background: DM.surface,
+        borderTop: `1px solid ${DM.border}`,
+        display: "flex", alignItems: "center",
+        padding: "0 12px", gap: "10px",
+        fontSize: "10px", color: DM.textMuted,
+        zIndex: 10,
+      }}>
+        <span>© knowledgemap contributors</span>
+        <span style={{ color: DM.textFaint }}>·</span>
+        <a href="https://github.com/tom-geraghty/knowledgemap" target="_blank" rel="noreferrer"
+          style={{ color: DM.link, textDecoration: "none" }}>
+          MIT licensed version ↗
+        </a>
+        <span style={{ color: DM.textFaint }}>·</span>
+        <span>v{pkgJson.version}</span>
+        <span style={{ color: DM.textFaint }}>·</span>
+        <span style={{ position: "relative", display: "inline-block" }}
+          onMouseEnter={() => setAboutTooltip(true)}
+          onMouseLeave={() => setAboutTooltip(false)}>
+          <span style={{ cursor: "help", borderBottom: `1px dotted ${DM.textMuted}` }}>
+            About this map
+          </span>
+          {aboutTooltip && (
+            <div style={{
+              position: "absolute", bottom: "calc(100% + 8px)", left: "50%",
+              transform: "translateX(-50%)",
+              background: DM.surface, border: `1px solid ${DM.border}`,
+              borderRadius: "8px", padding: "10px 12px",
+              fontSize: "11px", color: DM.text, lineHeight: 1.6,
+              width: "260px", boxShadow: DM.shadow, zIndex: 100,
+              pointerEvents: "none",
+            }}>
+              A semantic knowledge map. Nodes are articles; links show conceptual relationships.
+            </div>
+          )}
+        </span>
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "6px" }}>
+          <span>{darkMode ? "🌙" : "☀️"}</span>
+          <button onClick={() => setDarkMode(d => { const next = !d; localStorage.setItem("psych-dark-mode", next); return next; })}
+            title={darkMode ? "Switch to light mode" : "Switch to dark mode"}
+            style={{
+              width: "32px", height: "16px", borderRadius: "8px", border: "none",
+              background: darkMode ? "#378ADD" : "#cccccc",
+              cursor: "pointer", position: "relative", padding: 0,
+              transition: "background 0.2s",
+            }}>
+            <span style={{
+              position: "absolute", top: "2px",
+              left: darkMode ? "18px" : "2px",
+              width: "12px", height: "12px", borderRadius: "50%",
+              background: "#ffffff",
+              transition: "left 0.2s",
+            }} />
+          </button>
+        </div>
+      </div>
+
       {/* Detail panel */}
-      {selected && <DetailPanel node={selected} onClose={() => { setSelected(null); setHighlightId(null); setTappedBoth(null); lockedRef.current = null; updateUrl(null); }} onSelectNode={(rel) => { setSelected(rel); setHighlightId(rel.id); lockedRef.current = rel.id; updateUrl(rel.id); const liveNode = simNodesRef.current?.find(d => d.id === rel.id); if (liveNode) zoomToNode(liveNode); }} copied={copied} setCopied={setCopied} getConnected={getConnected} isMobile={isMobile} graphMode={graphMode} THEMES_MAP={THEMES_MAP} HUB_IDS={HUB_IDS} DEGREES={DEGREES} ARTICLE_NODES={ARTICLE_NODES} getNodeColor={getNodeColor} />}
+      {selected && <DetailPanel DM={DM} node={selected} onClose={() => { setSelected(null); setHighlightId(null); setTappedBoth(null); lockedRef.current = null; updateUrl(null); }} onSelectNode={(rel) => { setSelected(rel); setHighlightId(rel.id); lockedRef.current = rel.id; updateUrl(rel.id); const liveNode = simNodesRef.current?.find(d => d.id === rel.id); if (liveNode) zoomToNode(liveNode); }} copied={copied} setCopied={setCopied} getConnected={getConnected} isMobile={isMobile} THEMES_MAP={THEMES_MAP} HUB_IDS={HUB_IDS} DEGREES={DEGREES} ARTICLE_NODES={ARTICLE_NODES} PAPER_NODES={PAPER_NODES} getNodeColor={getNodeColor} onSelectPaper={() => {}} />}
     </div>
   );
 }
