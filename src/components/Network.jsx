@@ -363,8 +363,6 @@ export default function Network() {
   };
   const initialMode = getInitialModeFromUrl();
   // ── Lazy-loaded papers data ─────────────────────────────────────────────
-  const [papersLoading, setPapersLoading] = useState(false);
-  const papersLoadedRef = useRef(false);
 
 
 
@@ -977,7 +975,7 @@ export default function Network() {
                   border: "none", cursor: "pointer", fontWeight: graphMode === mode ? 600 : 400,
                   minHeight: isMobile ? "36px" : "auto",
                 }}>
-                  {mode === "papers" && papersLoading ? "Loading…" : label}
+                  {label}
                 </button>
               ))}
             </div>
