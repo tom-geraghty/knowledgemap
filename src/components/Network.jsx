@@ -411,7 +411,7 @@ export default function Network() {
   const [activeTheme, setActiveTheme] = useState(initialTheme);
   const [activeAuthor, setActiveAuthor] = useState(initialAuthor);
   const [darkMode, setDarkMode] = useState(() => {
-    const stored = localStorage.getItem("psych-dark-mode");
+    const stored = localStorage.getItem("km-dark-mode");
     if (stored !== null) return stored === "true";
     return window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? false;
   });
@@ -1478,7 +1478,7 @@ export default function Network() {
         </span>
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "6px" }}>
           <span>{darkMode ? "🌙" : "☀️"}</span>
-          <button onClick={() => setDarkMode(d => { const next = !d; localStorage.setItem("psych-dark-mode", next); return next; })}
+          <button onClick={() => setDarkMode(d => { const next = !d; localStorage.setItem("km-dark-mode", next); return next; })}
             title={darkMode ? "Switch to light mode" : "Switch to dark mode"}
             style={{
               width: "32px", height: "16px", borderRadius: "8px", border: "none",
