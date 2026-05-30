@@ -1,6 +1,6 @@
 {
   "name": "knowledgemap",
-  "version": "4.50.1",
+  "version": "4.50.2",
   "private": true,
   "type": "module",
   "scripts": {

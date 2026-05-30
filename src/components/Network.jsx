@@ -98,14 +98,38 @@ function nodeR(d, isMobile) {
   return isMobile ? 12 + d.weight * 2 : 7 + d.weight * 1.5;
 }
 
-function DetailPanel({ node, onClose, onSelectNode, onSelectPaper, copied, setCopied, getConnected, isMobile, graphMode, THEMES_MAP, HUB_IDS, DEGREES, ARTICLE_NODES, PAPER_NODES, getNodeColor, DM }) {
+function DetailPanel({ node, onClose, onSelectNode, copied, setCopied, getConnected, isMobile, THEMES_MAP, HUB_IDS, DEGREES, ARTICLE_NODES, getNodeColor, DM, onNoteSaved, onAddBiblio, inBiblio }) {
   const connected = getConnected(node);
   const [featuredImage, setFeaturedImage] = useState(null);
   const [showAllConnected, setShowAllConnected] = useState(false);
+  const [descExpanded, setDescExpanded] = useState(false);
+  const [noteText, setNoteText] = useState("");
+  const [noteEditing, setNoteEditing] = useState(false);
+  const [noteSaved, setNoteSaved] = useState(false);
 
   useEffect(() => {
-    setFeaturedImage(null);
-    setShowAllConnected(false);
+    setFeaturedImage(null); setShowAllConnected(false);
+    setDescExpanded(false); setNoteEditing(false); setNoteSaved(false);
+    try {
+      const notes = JSON.parse(localStorage.getItem("km-notes") || "{}");
+      setNoteText(notes[node.id]?.note || "");
+    } catch(e) { setNoteText(""); }
+  }, [node.id]);
+
+  const saveNote = () => {
+    try {
+      const notes = JSON.parse(localStorage.getItem("km-notes") || "{}");
+      if (noteText.trim()) {
+        notes[node.id] = { note: noteText.trim(), savedAt: new Date().toISOString().slice(0, 10) };
+      } else { delete notes[node.id]; }
+      localStorage.setItem("km-notes", JSON.stringify(notes));
+      setNoteEditing(false); setNoteSaved(true);
+      setTimeout(() => setNoteSaved(false), 2000);
+      if (onNoteSaved) onNoteSaved();
+    } catch(e) {}
+  };
+
+  useEffect(() => {
     if (!node.slug) return;
     fetch(`https://psychsafety.com/wp-json/wp/v2/posts?slug=${node.slug}&_embed=true`)
       .then(r => r.json())
