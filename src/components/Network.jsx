@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import * as d3 from "d3";
 import { THEMES } from "../data/themes";
 import { RAW_NODES } from "../data/nodes";
@@ -132,7 +132,7 @@ function DetailPanel({ node, onClose, onSelectNode, onSelectPaper, copied, setCo
         <div style={{ flex: 1, maxWidth: "800px" }}>
           <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: node.title ? "2px" : "6px" }}>
             <span style={{ width: "10px", height: "10px", borderRadius: "50%", background: getNodeColor(node, THEMES_MAP), display: "inline-block", flexShrink: 0 }} />
-            <span style={{ fontWeight: 600, fontSize: isMobile ? "16px" : "15px", color: "#111" }}>{node.label}</span>
+            <span style={{ fontWeight: 600, fontSize: isMobile ? "16px" : "15px", color: DM.text }}>{node.label}</span>
             {HUB_IDS.has(node.id) && (
               <span style={{ fontSize: "10px", color: "#bbb" }}>· {DEGREES[node.id]} connections</span>
             )}
@@ -416,6 +416,59 @@ export default function Network() {
     return window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? false;
   });
   const [aboutTooltip, setAboutTooltip] = useState(false);
+  const [showMyNotes, setShowMyNotes] = useState(false);
+  const [showBibliography, setShowBibliography] = useState(false);
+  const [allNotes, setAllNotes] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("km-notes") || "{}"); }
+    catch(e) { return {}; }
+  });
+  const [allBiblio, setAllBiblio] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("km-biblio") || "[]"); }
+    catch(e) { return []; }
+  });
+  const refreshNotes = useCallback(() => {
+    try {
+      const notes = JSON.parse(localStorage.getItem("km-notes") || "{}");
+      setAllNotes(notes);
+      if (!svgRef.current || !simNodesRef.current) return;
+      const g = d3.select(svgRef.current).select("g");
+      const noteIds = new Set(Object.keys(notes));
+      g.selectAll(".note-dot").remove();
+      (simNodesRef.current || []).filter(d => noteIds.has(d.id) && d.x != null).forEach(d => {
+        const r = Math.sqrt(d.weight || 5) * 4 + 3;
+        g.append("circle").attr("class", "note-dot")
+          .attr("cx", d.x + r - 2).attr("cy", d.y - r + 2)
+          .attr("r", 4).attr("fill", "#378ADD")
+          .attr("stroke", "white").attr("stroke-width", 1.5)
+          .attr("pointer-events", "none");
+      });
+    } catch(e) {}
+  }, []);
+  const refreshBiblio = useCallback(() => {
+    try { setAllBiblio(JSON.parse(localStorage.getItem("km-biblio") || "[]")); }
+    catch(e) {}
+  }, []);
+  const generateArticleCitation = useCallback((node) => {
+    const formatName = (fullName) => {
+      const parts = fullName.trim().split(" ");
+      if (parts.length < 2) return fullName;
+      const surname = parts[parts.length - 1];
+      const initials = parts.slice(0, -1).map(p => p[0] + ".").join("");
+      return `${surname}, ${initials}`;
+    };
+    const authorStr = node.author?.includes(" & ")
+      ? node.author.split(" & ").map(formatName).join(" & ")
+      : formatName(node.author || "");
+    const year = node.date ? node.date.slice(0, 4) : "n.d.";
+    const titleFromSlug = (node.slug || "")
+      .replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase())
+      .replace(/\bOf\b/g, "of").replace(/\bThe\b/g, "the")
+      .replace(/\bA\b/g, "a").replace(/\bAnd\b/g, "and")
+      .replace(/\bIn\b/g, "in").replace(/\bTo\b/g, "to")
+      .replace(/\bFor\b/g, "for").replace(/^./, c => c.toUpperCase());
+    const title = node.title || titleFromSlug || node.label;
+    return `${authorStr} (${year}) '${title}'. Available at: ${node.url}`;
+  }, []);
   const [overlayTop, setOverlayTop] = useState(120);
   // Recalculate theme overlay top position whenever filters change
   useEffect(() => {
@@ -821,6 +874,18 @@ export default function Network() {
       linkSel.attr("x1", d => d.source.x).attr("y1", d => d.source.y)
         .attr("x2", d => d.target.x).attr("y2", d => d.target.y);
       nodeG.attr("transform", d => `translate(${d.x},${d.y})`);
+      try {
+        const noteIds = new Set(Object.keys(JSON.parse(localStorage.getItem("km-notes") || "{}")));
+        g.selectAll(".note-dot").remove();
+        nodes.filter(d => noteIds.has(d.id) && d.x != null).forEach(d => {
+          const r = Math.sqrt(d.weight || 5) * 4 + 3;
+          g.append("circle").attr("class", "note-dot")
+            .attr("cx", d.x + r - 2).attr("cy", d.y - r + 2)
+            .attr("r", 4).attr("fill", "#378ADD")
+            .attr("stroke", "white").attr("stroke-width", 1.5)
+            .attr("pointer-events", "none");
+        });
+      } catch(e) {}
       // Zoom to initial node once simulation has cooled enough to give stable coords
       if (!zoomedToInitial && initialNode && sim.alpha() < 0.05) {
         const nd = nodes.find(n => n.id === initialNode.id);
@@ -990,8 +1055,7 @@ export default function Network() {
           </div>
 
           {/* Reset button — visible when anything is filtered or selected */}
-          {(activeTheme !== "all" || activeAuthor !== "All authors" || searchQuery || selected) && (
-            <button onClick={() => {
+          <button onClick={() => {
               setActiveTheme("all"); updateThemeUrl("all");
               setActiveAuthor("All authors"); updateAuthorUrl("All authors");
               setSelected(null); setHighlightId(null);
@@ -1085,6 +1149,13 @@ export default function Network() {
 
         {/* Theme filters — horizontal scroll on mobile */}
         <div style={{ position: "relative" }}>
+          {isMobile && !pillRowAtEnd && (
+            <div style={{
+              position: "absolute", right: 0, top: 0, bottom: "4px", width: "40px",
+              background: `linear-gradient(to right, transparent, ${DM.surface})`,
+              pointerEvents: "none", zIndex: 2,
+            }} />
+          )}
           {/* Fade indicator — only on mobile, hides once scrolled to end */}
           {isMobile && !pillRowAtEnd && (
             <div style={{
@@ -1225,7 +1296,7 @@ export default function Network() {
               padding: "8px 12px", fontSize: "12px", maxWidth: "220px",
               pointerEvents: "none", zIndex: 20, boxShadow: "0 2px 8px rgba(0,0,0,0.08)"
             }}>
-              <div style={{ fontWeight: 600, fontSize: "13px", marginBottom: "2px", color: "#111" }}>{tooltip.node.label}</div>
+              <div style={{ fontWeight: 600, fontSize: "13px", marginBottom: "2px", color: DM.text }}>{tooltip.node.label}</div>
               <div style={{ color: "#888", fontSize: "11px", marginBottom: "4px" }}>
                 {tooltip.node.author}
                 {HUB_IDS.has(tooltip.node.id) && <span style={{ color: "#bbb", marginLeft: "6px" }}>· {DEGREES[tooltip.node.id]} connections</span>}
@@ -1447,6 +1518,18 @@ export default function Network() {
         fontSize: "10px", color: DM.textMuted,
         zIndex: 10,
       }}>
+        <button onClick={() => setShowBibliography(p => !p)}
+          style={{ background: "none", border: "none", cursor: "pointer", padding: 0,
+            fontSize: "10px", color: allBiblio.length ? DM.link : DM.textFaint, fontFamily: "inherit" }}>
+          📚 Bibliography{allBiblio.length ? ` (${allBiblio.length})` : ""}
+        </button>
+        <span style={{ color: DM.textFaint }}>·</span>
+        <button onClick={() => setShowMyNotes(p => !p)}
+          style={{ background: "none", border: "none", cursor: "pointer", padding: 0,
+            fontSize: "10px", color: Object.keys(allNotes).length ? DM.link : DM.textFaint, fontFamily: "inherit" }}>
+          📝 My notes{Object.keys(allNotes).length ? ` (${Object.keys(allNotes).length})` : ""}
+        </button>
+        <span style={{ color: DM.textFaint }}>·</span>
         <span>© knowledgemap contributors</span>
         <span style={{ color: DM.textFaint }}>·</span>
         <a href="https://github.com/tom-geraghty/knowledgemap" target="_blank" rel="noreferrer"
