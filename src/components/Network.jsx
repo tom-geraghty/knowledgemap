@@ -274,29 +274,7 @@ function DetailPanel({ node, onClose, onSelectNode, copied, setCopied, getConnec
                   </div>
                 </div>
               )}
-              {graphMode === "articles" && (() => {
-                const relatedPapers = [];
-                if (relatedPapers.length === 0) return null;
-                return (
-                  <div style={{ marginTop: "8px", paddingTop: "8px", borderTop: "1px solid #f0f0f0" }}>
 
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: "4px" }}>
-                      {relatedPapers.map(paper => (
-                        <button key={paper.id}
-                          onClick={() => onSelectPaper(paper)}
-                          title={paper.title}
-                          style={{
-                            fontSize: "11px", color: "#888780", cursor: "pointer",
-                            padding: "2px 7px", borderRadius: "10px", fontFamily: "inherit",
-                            background: "#88878011", border: "0.5px solid #88878044",
-                          }}>
-                          {paper.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                );
-              })()}
             </div>
           </div>
           {connected.length > 0 && (
@@ -1093,7 +1071,6 @@ export default function Network() {
             }}>
               ↺ Reset
             </button>
-          )}
 
           <button onClick={() => {
             const pool = filteredNodes.length > 0 ? filteredNodes : NODES;
